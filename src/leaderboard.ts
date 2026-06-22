@@ -10,6 +10,7 @@
 import { LeaderboardConfig, TraderProfile, DataApiTrade } from './types';
 import { log } from './logger';
 import { proxyFetch } from './proxy';
+import { discoverSmartMoney, getBullpenLeaderboard } from './bullpen';
 
 const DATA_API_BASE = 'https://data-api.polymarket.com';
 
@@ -203,8 +204,35 @@ export class LeaderboardScraper {
   async discover(): Promise<TraderProfile[]> {
     log.info('🔍 Discovering top Polymarket traders...');
 
-    // Step 1: Fetch raw leaderboard data
-    const leaderboard = await this.fetchLeaderboard();
+    // Step 0: Try Bullpen smart money first (better signals, whale tracking)
+    let bullpenProfiles: TraderProfile[] = [];
+    try {
+      const smartMoney = await discoverSmartMoney({ type: 'top_traders', limit: this.config.fetchLimit });
+      if (smartMoney.length > 0) {
+        bullpenProfiles = smartMoney.filter((p) =>
+          p.pnl >= this.config.minPnl &&
+          p.winRate >= this.config.minWinRate &&
+          p.tradeCount >= this.config.minTrades
+        );
+        log.info(`Bullpen smart money: ${bullpenProfiles.length} traders pass filters`);
+      }
+    } catch (error) {
+      log.debug('Bullpen smart money unavailable, falling back to Polymarket API');
+    }
+
+    // Step 1: Fetch raw leaderboard data (from Polymarket API or Bullpen)
+    let leaderboard: LeaderboardEntry[];
+    if (bullpenProfiles.length >= this.config.maxWallets) {
+      // Bullpen provided enough — skip Polymarket API
+      const topBullpen = bullpenProfiles
+        .sort((a, b) => b.score - a.score)
+        .slice(0, this.config.maxWallets);
+      this.cachedProfiles = topBullpen;
+      this.lastRefreshTime = Date.now();
+      this.printLeaderboard(topBullpen);
+      return topBullpen;
+    }
+    leaderboard = await this.fetchLeaderboard();
     if (leaderboard.length === 0) {
       log.warn('No leaderboard data available');
       return this.cachedProfiles; // Return cached if available

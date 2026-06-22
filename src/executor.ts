@@ -11,6 +11,7 @@
 import { ClobClient, Side, OrderType } from '@polymarket/clob-client';
 import { BotConfig, ParsedTrade, CopyTradeResult, CopyOrderType } from './types';
 import { log } from './logger';
+import { calculateCopySize, calculateExecutionPrice } from './sizing';
 
 /** Map our config order type strings to SDK OrderType enum */
 const ORDER_TYPE_MAP: Record<CopyOrderType, OrderType> = {
@@ -35,31 +36,18 @@ export class TradeExecutor {
 
   /**
    * Calculate the copy trade size based on target's position and our multiplier.
+   * Delegates to shared helper in sizing.ts.
    */
   calculateCopySize(targetSize: number): number {
-    const raw = targetSize * this.config.positionMultiplier;
-
-    // Clamp to min/max
-    const clamped = Math.min(Math.max(raw, this.config.minTradeSize), this.config.maxTradeSize);
-
-    // Round to 2 decimal places
-    return Math.round(clamped * 100) / 100;
+    return calculateCopySize(this.config, targetSize);
   }
 
   /**
    * Calculate the execution price with slippage tolerance.
-   * For BUY: price + slippage (willing to pay more)
-   * For SELL: price - slippage (willing to accept less)
+   * Delegates to shared helper in sizing.ts.
    */
   calculateExecutionPrice(price: number, side: 'BUY' | 'SELL'): number {
-    const slippage = this.config.slippageTolerance;
-    const adjusted = side === 'BUY'
-      ? price * (1 + slippage)
-      : price * (1 - slippage);
-
-    // Clamp to valid range [0.01, 0.99] and round to 2 decimals
-    const clamped = Math.min(Math.max(adjusted, 0.01), 0.99);
-    return Math.round(clamped * 100) / 100;
+    return calculateExecutionPrice(this.config.slippageTolerance, price, side);
   }
 
   /**

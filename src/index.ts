@@ -10,6 +10,11 @@
  * - Trade execution (FOK/GTC/FAK orders)
  * - Position tracking
  *
+ * Modes:
+ *   LIVE    — Real orders via Polymarket CLOB (default)
+ *   PAPER   — Virtual money, simulated fills, journal + metrics (PAPER_TRADING=true)
+ *   BACKTEST— Historical replay, paper execution, full report (BACKTEST=true)
+ *
  * Usage:
  *   1. Copy .env.example to .env and fill in your credentials
  *   2. npm install
@@ -17,20 +22,34 @@
  *   4. npm run build && npm start  (production)
  */
 
-import { loadConfig, loadAIConfig, loadLeaderboardConfig, printConfig, printAIConfig, printLeaderboardConfig } from './config';
-import { configureProxy } from './proxy';
+import {
+  loadConfig, loadAIConfig, loadLeaderboardConfig,
+  printConfig, printAIConfig, printLeaderboardConfig,
+  isPaperTrading, isBacktest, loadPaperConfig, loadBacktestConfig,
+  printPaperConfig, printBacktestConfig,
+  isIntelligenceEnabled, loadIntelligenceConfig, printIntelligenceConfig,
+} from './config';
+import { configureProxy, proxyFetch } from './proxy';
 import { configureFinFeed } from './cross-platform';
+import { isBullpenAvailable, isBullpenAuthenticated, executeTradeViaBullpen } from './bullpen';
 import { initClient, ensureAllowances } from './client';
 import { TradeMonitor } from './monitor';
+import { HistoricalMonitor } from './historical-monitor';
 import { RiskManager } from './risk';
 import { TradeExecutor } from './executor';
+import { PaperExecutor } from './paper-executor';
 import { PositionTracker } from './positions';
+import { TradeJournal } from './journal';
+import { MetricsCalculator } from './metrics';
 import { AITradeFilter } from './ai-filter';
 import { LeaderboardScraper } from './leaderboard';
 import { OnChainMonitor } from './onchain';
 import { TelegramNotifier } from './telegram';
+import { MarketIntelligence, formatIntelligenceForPrompt } from './intelligence';
 import { log, setLogLevel } from './logger';
-import { ParsedTrade, SessionStats, BotConfig } from './types';
+import { ParsedTrade, SessionStats, BotConfig, PaperTradingConfig } from './types';
+import { calculateCopySize, calculateSimulatedFillPrice } from './sizing';
+import * as fs from 'fs';
 
 // ──────────────────────────────────────────────
 // Session Statistics
@@ -52,35 +71,70 @@ const stats: SessionStats = {
 // ──────────────────────────────────────────────
 
 async function main(): Promise<void> {
+  // Detect mode early for banner
+  const paperMode = isPaperTrading();
+  const backtestMode = isBacktest();
+  const modeLabel = backtestMode ? '📊 BACKTEST' : paperMode ? '📝 PAPER TRADING' : '🤖 LIVE';
+
   console.log(`
 ╔══════════════════════════════════════════════════╗
-║       🤖 Polymarket Copy-Trading Bot v1.0        ║
+║       Polymarket Copy-Trading Bot v1.0           ║
 ╠══════════════════════════════════════════════════╣
+║  Mode: ${modeLabel.padEnd(41)}║
 ║  Monitor top traders → Mirror their trades       ║
 ║  Built with Polymarket CLOB SDK                  ║
 ╚══════════════════════════════════════════════════╝
   `);
 
   // ── Step 1: Load configuration ──
-  let config = loadConfig();
+  // Backtest mode doesn't need PRIVATE_KEY — load config with relaxed validation
+  let config = loadConfig(backtestMode);
   const aiConfig = loadAIConfig();
   const leaderboardConfig = loadLeaderboardConfig();
+  const paperConfig = loadPaperConfig();
+  const backtestConfig = loadBacktestConfig();
+  const intelligenceConfig = loadIntelligenceConfig();
+
   setLogLevel(config.logLevel);
   printConfig(config);
   printAIConfig(aiConfig);
   printLeaderboardConfig(leaderboardConfig);
+  printPaperConfig(paperConfig);
+  printBacktestConfig(backtestConfig);
+  printIntelligenceConfig(intelligenceConfig);
+
+  // Validate mode combinations
+  if (paperMode && backtestMode) {
+    log.warn('Both PAPER_TRADING and BACKTEST are enabled — backtest mode takes priority');
+  }
+  if (backtestMode && !backtestConfig) {
+    log.error('BACKTEST=true but config failed to load. Exiting.');
+    process.exit(1);
+  }
 
   // ── Step 1a: Configure proxy and external APIs ──
   configureProxy(config.proxyUrl);
   configureFinFeed(config.finfeedApiKey);
 
+  // Check Bullpen CLI availability
+  if (config.bullpenEnabled) {
+    const available = isBullpenAvailable();
+    const authed = isBullpenAuthenticated();
+    if (available && authed) {
+      log.success('Bullpen CLI detected and authenticated — smart money + market data active');
+    } else if (available) {
+      log.warn('Bullpen CLI detected but not authenticated — run `bullpen login` for full features');
+    } else {
+      log.warn('Bullpen CLI not found — install with `npm install -g @bullpenfi/cli`');
+    }
+  }
+
   // ── Step 1b: Auto-discover wallets if enabled ──
-  if (leaderboardConfig) {
+  if (leaderboardConfig && !backtestMode) {
     const scraper = new LeaderboardScraper(leaderboardConfig);
     const profiles = await scraper.discover();
     if (profiles.length > 0) {
       const discoveredWallets = profiles.map((p) => p.walletAddress);
-      // Merge discovered wallets with manually configured ones
       const allWallets = [...new Set([...config.targetWallets, ...discoveredWallets])];
       config = { ...config, targetWallets: allWallets };
       log.success(`Auto-discovered ${profiles.length} top traders (${allWallets.length} total wallets)`);
@@ -92,23 +146,45 @@ async function main(): Promise<void> {
     }
   }
 
+  // Fill backtest wallet list from config
+  if (backtestConfig) {
+    backtestConfig.targetWallets = config.targetWallets;
+  }
+
+  // ──────────────────────────────────────────────
+  // BACKTEST MODE — Historical replay, then exit
+  // ──────────────────────────────────────────────
+  if (backtestMode && backtestConfig) {
+    await runBacktest(config, backtestConfig);
+    return;
+  }
+
   // ── Step 2: Initialize CLOB client ──
   const { clob, wallet } = await initClient(config);
 
   // ── Step 3: Set token allowances (one-time, skips if already set) ──
-  if (!config.dryRun) {
+  if (!config.dryRun && !paperMode) {
     await ensureAllowances(clob);
   } else {
-    log.info('[DRY RUN] Skipping allowance setup');
+    log.info(paperMode ? '[PAPER] Skipping allowance setup' : '[DRY RUN] Skipping allowance setup');
   }
 
   // ── Step 4: Initialize components ──
   const positions = new PositionTracker();
   const riskManager = new RiskManager(config, positions);
-  const executor = new TradeExecutor(config, clob);
+
+  // Swap executor based on mode
+  const executor = paperMode
+    ? new PaperExecutor(config, paperConfig!)
+    : new TradeExecutor(config, clob);
+
   const aiFilter = aiConfig ? new AITradeFilter(aiConfig) : null;
 
-  // Initialize Telegram notifier (if configured)
+  // Paper trading journal
+  const journal = paperMode ? new TradeJournal() : null;
+  const startingCapital = paperMode ? paperConfig!.startingCapital : 0;
+
+  // Initialize Telegram notifier (skip for paper trading unless explicitly configured)
   let telegram: TelegramNotifier | null = null;
   const tgToken = config.telegramBotToken;
   const tgChatId = config.telegramChatId;
@@ -125,10 +201,17 @@ async function main(): Promise<void> {
   async function handleNewTrade(trade: ParsedTrade): Promise<void> {
     stats.tradesDetected++;
 
-    // Skip sells in copy-trading mode (BUY-only safeguard)
-    if (trade.side === 'SELL') {
+    // In paper mode, process both BUY and SELL for journal exit tracking
+    if (trade.side === 'SELL' && !paperMode) {
       log.debug(`Skipping SELL trade from ${trade.user.slice(0, 8)}... (BUY-only mode)`);
       stats.tradesSkipped++;
+      return;
+    }
+
+    // Paper mode: record SELL as exit in journal
+    if (trade.side === 'SELL' && paperMode && journal) {
+      journal.recordExit(trade.tokenId, trade.price, trade.timestamp);
+      log.info(`[PAPER] Exit recorded: ${trade.outcome} @ $${trade.price}`);
       return;
     }
 
@@ -213,6 +296,11 @@ async function main(): Promise<void> {
             side: result.side,
           });
 
+          // Record in paper journal
+          if (journal) {
+            journal.recordEntry(trade, result.copyNotional, result.price, 'copy-trade');
+          }
+
           telegram?.notifyExecution({ side: result.side, shares: result.copyShares, price: result.price, notional: result.copyNotional, orderId: result.orderId ?? '', outcome: trade.outcome });
           log.success(
             `Copy trade executed: ${result.side} ${result.copyShares.toFixed(4)} shares ` +
@@ -232,9 +320,57 @@ async function main(): Promise<void> {
       });
   }
 
-  // ── Step 5b: Start on-chain settlement monitor (if WS_RPC_URL configured) ──
+  // ── Step 5b: Start market intelligence (if enabled) ──
+  let intelligence: MarketIntelligence | null = null;
+  let marketRefreshInterval: ReturnType<typeof setInterval> | null = null;
+  if (intelligenceConfig && !paperMode) {
+    intelligence = new MarketIntelligence(intelligenceConfig, (alert) => {
+      // Log alerts prominently even without Telegram
+      const emoji = alert.severity === 'critical' ? '🚨' : alert.severity === 'high' ? '⚠️' : '📋';
+      log.risk(`${emoji} INTELLIGENCE ALERT [${alert.severity.toUpperCase()}]: ${alert.event.title}`);
+      log.risk(`   ${alert.suggestedAction}`);
+      log.risk(`   Markets: ${alert.affectedMarkets.length > 0 ? alert.affectedMarkets.join(', ') : 'none matched'}`);
+
+      // Forward high-impact alerts to Telegram
+      if (telegram && alert.severity !== 'low') {
+        telegram.notifyRisk({
+          type: 'halt',
+          message: `${emoji} [${alert.severity.toUpperCase()}] ${alert.event.title.slice(0, 100)}\n${alert.suggestedAction}`,
+          trade: alert.affectedMarkets[0],
+        });
+      }
+    });
+    intelligence.start();
+
+    // Fetch active Polymarket markets for event correlation (initial + periodic)
+    const refreshActiveMarkets = async (): Promise<void> => {
+      try {
+        const resp = await proxyFetch('https://gamma-api.polymarket.com/markets?active=true&limit=200&order=volume24hr&ascending=false', {
+          headers: { Accept: 'application/json' },
+          signal: AbortSignal.timeout(15_000),
+        });
+        if (resp.ok) {
+          const markets = (await resp.json()) as Array<{ slug?: string; question?: string; conditionId?: string }>;
+          intelligence!.updateActiveMarkets(
+            markets.map((m) => ({ slug: m.slug || '', question: m.question || '', conditionId: m.conditionId }))
+          );
+        }
+      } catch (err) {
+        log.debug('Failed to refresh active markets for intelligence correlation');
+      }
+    };
+    refreshActiveMarkets();
+    marketRefreshInterval = setInterval(refreshActiveMarkets, 300_000); // Refresh every 5 min
+
+    // Attach intelligence engine to AI filter for event-enriched prompts
+    if (aiFilter) {
+      aiFilter.setIntelligence(intelligence);
+    }
+  }
+
+  // ── Step 5c: Start on-chain settlement monitor (skip for paper mode) ──
   let onchainMonitor: OnChainMonitor | null = null;
-  if (config.wsRpcUrl) {
+  if (config.wsRpcUrl && !paperMode) {
     onchainMonitor = new OnChainMonitor(config.targetWallets, (fill) => {
       log.debug(`On-chain settlement confirmed: ${fill.side} token=${fill.tokenId.slice(0, 12)}... amount=${fill.makerAmount} USDC`);
     });
@@ -248,9 +384,13 @@ async function main(): Promise<void> {
   const monitor = new TradeMonitor(config, handleNewTrade);
   await monitor.start();
 
-  log.success('Bot is running! Monitoring target wallets...');
+  const modeDisplay = paperMode ? '📝 PAPER TRADING' : config.dryRun ? '🟢 DRY RUN' : '🔴 LIVE TRADING';
+  log.success(`Bot is running! Monitoring target wallets...`);
   log.info(`Wallet: ${wallet.address}`);
-  log.info(`Mode: ${config.dryRun ? '🟢 DRY RUN' : '🔴 LIVE TRADING'}`);
+  log.info(`Mode: ${modeDisplay}`);
+  if (paperMode) {
+    log.info(`Starting capital: $${startingCapital.toFixed(2)}`);
+  }
   log.info('Press Ctrl+C to stop\n');
 
   // ── Step 7: Periodic status reports ──
@@ -265,24 +405,241 @@ async function main(): Promise<void> {
       failed: stats.tradesFailed,
       volume: stats.totalVolume,
     });
-  }, 600_000); // Every 10 minutes (avoids flooding Telegram)
+  }, 600_000); // Every 10 minutes
 
   // ── Step 8: Graceful shutdown ──
   async function shutdown(signal: string): Promise<void> {
     log.info(`\n${signal} received. Shutting down...`);
     monitor.stop();
     if (onchainMonitor) onchainMonitor.stop();
+    if (intelligence) intelligence.stop();
     clearInterval(statusInterval);
+    if (marketRefreshInterval) clearInterval(marketRefreshInterval);
     printFinalReport();
+
+    // Paper trading: print metrics and optionally export journal
+    if (paperMode && journal) {
+      const entries = journal.getEntries();
+      const closedTrades = journal.getClosedTrades();
+      const openPositions = journal.getOpenPositions();
+
+      if (closedTrades.length > 0 || openPositions.length > 0) {
+        const metrics = MetricsCalculator.calculate(entries, startingCapital);
+        console.log(MetricsCalculator.formatReport(metrics));
+
+        if (openPositions.length > 0) {
+          console.log(`\n📂 ${openPositions.length} open position(s) (no exit recorded):`);
+          for (const pos of openPositions) {
+            console.log(`  • ${pos.outcome} | ${pos.size.toFixed(4)} shares @ $${pos.entryPrice.toFixed(4)}`);
+          }
+        }
+      }
+
+      if (paperConfig?.exportOnExit && entries.length > 0) {
+        const timestamp = new Date().toISOString().replace(/[:.]/g, '-').slice(0, 19);
+        const ext = paperConfig.exportFormat;
+        const filename = `paper-journal-${timestamp}.${ext}`;
+        const content = ext === 'csv' ? MetricsCalculator.exportJournalCSV(entries) : MetricsCalculator.exportJournalJSON(entries);
+
+        try {
+        fs.writeFileSync(filename, content, 'utf-8');
+          log.success(`Journal exported: ${filename}`);
+        } catch (err) {
+          const msg = err instanceof Error ? err.message : String(err);
+          log.warn(`Failed to export journal: ${msg}`);
+        }
+      }
+    }
+
     if (telegram) await telegram.disconnect();
     process.exit(0);
   }
 
   process.on('SIGINT', () => { shutdown('SIGINT').catch(() => process.exit(1)); });
   process.on('SIGTERM', () => { shutdown('SIGTERM').catch(() => process.exit(1)); });
+}
 
-  // Keep process alive — SIGINT/SIGTERM handlers above will call
-  // process.exit() to trigger a clean shutdown.
+// ──────────────────────────────────────────────
+// Paper Trading Helpers
+// ──────────────────────────────────────────────
+
+/**
+ * Synchronous paper trade execution — mirrors PaperExecutor logic inline.
+ * Used during backtest to guarantee journal entry ordering (no async gaps).
+ * Applies simulated slippage and gas costs for realistic backtest results.
+ */
+function executePaperSync(
+  config: BotConfig,
+  trade: ParsedTrade,
+  paperCfg: PaperTradingConfig,
+): { success: true; orderId: string; copyNotional: number; copyShares: number; price: number; side: 'BUY' | 'SELL' } {
+  const copyNotional = calculateCopySize(config, trade.size);
+  const fillPrice = calculateSimulatedFillPrice(paperCfg.simulatedSlippageBps, trade.price, trade.side);
+
+  const copyShares = fillPrice > 0 ? copyNotional / fillPrice : 0;
+  const gasCost = paperCfg.simulatedGasCost;
+
+  log.info(
+    `[BACKTEST] ${trade.side} ${copyNotional.toFixed(2)} USDC @ ${fillPrice.toFixed(4)} ` +
+    `(${copyShares.toFixed(4)} shares) | Gas: $${gasCost.toFixed(2)}`,
+  );
+  return {
+    success: true,
+    orderId: `backtest-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`,
+    copyNotional: copyNotional + gasCost,
+    copyShares,
+    price: fillPrice,
+    side: trade.side,
+  };
+}
+
+// ──────────────────────────────────────────────
+// Backtest Mode — Historical replay
+// ──────────────────────────────────────────────
+
+async function runBacktest(
+  config: BotConfig,
+  backtestConfig: import('./types').BacktestConfig,
+): Promise<void> {
+  log.info('Starting backtest...');
+  log.info(`Time range: ${new Date(backtestConfig.startTime).toISOString()} → ${new Date(backtestConfig.endTime).toISOString()}`);
+  log.info(`Wallets: ${backtestConfig.targetWallets.length}`);
+  log.info(`Starting capital: $${backtestConfig.startingCapital}`);
+  log.info(`Speed: ${backtestConfig.speedMultiplier}x`);
+
+  const backtestStart = Date.now();
+
+  // Create paper components (no CLOB needed)
+  const paperCfg: import('./types').PaperTradingConfig = {
+    startingCapital: backtestConfig.startingCapital,
+    fillMode: 'target_price',
+    simulatedSlippageBps: backtestConfig.simulatedSlippageBps,
+    simulatedGasCost: backtestConfig.simulatedGasCost,
+    autoCloseOnResolution: true,
+    exportOnExit: backtestConfig.exportResults,
+    exportFormat: backtestConfig.exportFormat,
+  };
+
+  const positions = new PositionTracker();
+  const riskManager = new RiskManager(config, positions);
+  const journal = new TradeJournal();
+
+  if (backtestConfig.targetWallets.length === 0) {
+    log.warn('No target wallets configured — backtest will have no trades');
+  }
+
+  let totalTrades = 0;
+  let copiedTrades = 0;
+  let skippedTrades = 0;
+
+  // Trade handler for backtest — fully synchronous to preserve journal ordering.
+  function handleBacktestTrade(trade: ParsedTrade): void {
+    totalTrades++;
+
+    // Record SELL as exit in journal
+    if (trade.side === 'SELL') {
+      journal.recordExit(trade.tokenId, trade.price, trade.timestamp);
+      return;
+    }
+
+    const copyNotional = calculateCopySize(config, trade.size);
+
+    // Risk check
+    const riskCheck = riskManager.checkTrade(trade, copyNotional);
+    if (!riskCheck.allowed) {
+      skippedTrades++;
+      return;
+    }
+
+    // Execute paper trade synchronously (no async — preserves journal ordering)
+    const result = executePaperSync(config, trade, paperCfg);
+    if (result.success) {
+      copiedTrades++;
+      stats.tradesCopied++;
+      stats.totalVolume += result.copyNotional;
+
+      positions.recordFill({ trade, notional: result.copyNotional, shares: result.copyShares, price: result.price, side: result.side });
+      riskManager.recordFill({ trade, notional: result.copyNotional, shares: result.copyShares, price: result.price, side: result.side });
+      journal.recordEntry(trade, result.copyNotional, result.price, 'backtest');
+    } else {
+      stats.tradesFailed++;
+    }
+  }
+
+  // Start historical replay
+  const historicalMonitor = new HistoricalMonitor(config, backtestConfig, handleBacktestTrade);
+
+  try {
+    await historicalMonitor.start();
+  } catch (error) {
+    const msg = error instanceof Error ? error.message : String(error);
+    log.error(`Backtest failed: ${msg}`);
+    process.exit(1);
+  }
+
+  const backtestDuration = Date.now() - backtestStart;
+
+  // ── Generate report ──
+  const entries = journal.getEntries();
+  const closedTrades = journal.getClosedTrades();
+  const openPositions = journal.getOpenPositions();
+
+  console.log('\n' + '═'.repeat(60));
+  console.log('📊  BACKTEST COMPLETE');
+  console.log('═'.repeat(60));
+  console.log(`  Duration:         ${(backtestDuration / 1000).toFixed(1)}s`);
+  console.log(`  Trades fetched:   ${totalTrades}`);
+  console.log(`  Trades copied:    ${copiedTrades}`);
+  console.log(`  Trades skipped:   ${skippedTrades}`);
+  console.log(`  Journal entries:  ${entries.length}`);
+  console.log(`  Closed trades:    ${closedTrades.length}`);
+  console.log(`  Open positions:   ${openPositions.length}`);
+
+  if (closedTrades.length > 0) {
+    const metrics = MetricsCalculator.calculate(entries, backtestConfig.startingCapital);
+    console.log(MetricsCalculator.formatReport(metrics));
+  } else {
+    console.log('\n  ⚠️  No closed trades — not enough data for performance metrics');
+  }
+
+  // Export results
+  if (backtestConfig.exportResults && entries.length > 0) {
+    const timestamp = new Date().toISOString().replace(/[:.]/g, '-').slice(0, 19);
+    const ext = backtestConfig.exportFormat;
+
+    // Export journal
+    const journalFile = `backtest-journal-${timestamp}.${ext}`;
+    const journalContent = ext === 'csv'
+      ? MetricsCalculator.exportJournalCSV(entries)
+      : MetricsCalculator.exportJournalJSON(entries);
+
+    // Export full backtest result as JSON
+    const resultFile = `backtest-result-${timestamp}.json`;
+    const snapshots = MetricsCalculator.generateSnapshots(entries, backtestConfig.startingCapital);
+    const result: import('./types').BacktestResult = {
+      config: backtestConfig,
+      metrics: closedTrades.length > 0
+        ? MetricsCalculator.calculate(entries, backtestConfig.startingCapital)
+        : MetricsCalculator.calculate([], backtestConfig.startingCapital),
+      journal: entries,
+      snapshots,
+      startTime: backtestConfig.startTime,
+      endTime: backtestConfig.endTime,
+      durationMs: backtestDuration,
+    };
+
+    try {
+      fs.writeFileSync(journalFile, journalContent, 'utf-8');
+      log.success(`Journal exported: ${journalFile}`);
+      fs.writeFileSync(resultFile, JSON.stringify(result, null, 2), 'utf-8');
+      log.success(`Results exported: ${resultFile}`);
+    } catch (err) {
+      const msg = err instanceof Error ? err.message : String(err);
+      log.warn(`Failed to export: ${msg}`);
+    }
+  }
+
+  log.success('Backtest finished');
 }
 
 // ──────────────────────────────────────────────

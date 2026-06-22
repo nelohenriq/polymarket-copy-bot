@@ -4,7 +4,7 @@
  */
 
 import * as dotenv from 'dotenv';
-import { BotConfig, CopyOrderType, LogLevel, AIFilterConfig, LeaderboardConfig } from './types';
+import { BotConfig, CopyOrderType, LogLevel, AIFilterConfig, LeaderboardConfig, PaperTradingConfig, BacktestConfig, IntelligenceConfig, EventCategory } from './types';
 
 dotenv.config();
 
@@ -39,7 +39,11 @@ function parseBoolEnv(key: string, defaultValue: boolean): boolean {
 const VALID_ORDER_TYPES: CopyOrderType[] = ['FOK', 'GTC', 'FAK'];
 const VALID_LOG_LEVELS: LogLevel[] = ['debug', 'info', 'warn', 'error'];
 
-export function loadConfig(): BotConfig {
+/**
+ * Load the main bot configuration.
+ * @param allowMissingKey - If true, PRIVATE_KEY is optional (used for backtest mode)
+ */
+export function loadConfig(allowMissingKey = false): BotConfig {
   const orderType = optionalEnv('ORDER_TYPE', 'FOK') as CopyOrderType;
   if (!VALID_ORDER_TYPES.includes(orderType)) {
     throw new Error(`Invalid ORDER_TYPE: ${orderType}. Must be one of: ${VALID_ORDER_TYPES.join(', ')}`);
@@ -63,7 +67,7 @@ export function loadConfig(): BotConfig {
   }
 
   const config: BotConfig = {
-    privateKey: requireEnv('PRIVATE_KEY'),
+    privateKey: allowMissingKey ? (process.env['PRIVATE_KEY'] || '0x' + '00'.repeat(32)) : requireEnv('PRIVATE_KEY'),
     targetWallets,
     rpcUrl: optionalEnv('RPC_URL', 'https://polygon-rpc.com'),
     positionMultiplier: parseFloatEnv('POSITION_MULTIPLIER', 0.1),
@@ -85,6 +89,7 @@ export function loadConfig(): BotConfig {
     telegramBotToken: process.env['TELEGRAM_BOT_TOKEN'] || undefined,
     telegramChatId: process.env['TELEGRAM_CHAT_ID'] || undefined,
     finfeedApiKey: process.env['FINFEED_API_KEY'] || undefined,
+    bullpenEnabled: parseBoolEnv('BULLPEN_ENABLED', false),
   };
 
   return config;
@@ -185,6 +190,99 @@ export function printLeaderboardConfig(config: LeaderboardConfig | undefined): v
   console.log(`     Refresh:        every ${config.refreshIntervalMinutes}min`);
 }
 
+/**
+ * Check if paper trading mode is enabled.
+ */
+export function isPaperTrading(): boolean {
+  return parseBoolEnv('PAPER_TRADING', false);
+}
+
+/**
+ * Load paper trading configuration from environment variables.
+ * Returns undefined if paper trading is not enabled.
+ */
+export function loadPaperConfig(): PaperTradingConfig | undefined {
+  if (!isPaperTrading()) return undefined;
+
+  return {
+    startingCapital: parseFloatEnv('PAPER_STARTING_CAPITAL', 1000),
+    fillMode: (optionalEnv('PAPER_FILL_MODE', 'target_price') as PaperTradingConfig['fillMode']),
+    simulatedSlippageBps: parseFloatEnv('PAPER_SLIPPAGE_BPS', 30),
+    simulatedGasCost: parseFloatEnv('PAPER_GAS_COST', 0.01),
+    autoCloseOnResolution: parseBoolEnv('PAPER_AUTO_CLOSE', true),
+    exportOnExit: parseBoolEnv('PAPER_EXPORT_ON_EXIT', true),
+    exportFormat: (optionalEnv('PAPER_EXPORT_FORMAT', 'json') as 'json' | 'csv'),
+  };
+}
+
+export function printPaperConfig(config: PaperTradingConfig | undefined): void {
+  if (!config) {
+    console.log('   Paper Trading:    disabled');
+    return;
+  }
+  console.log('   Paper Trading:    ✅ ENABLED');
+  console.log(`     Starting Cap:   $${config.startingCapital}`);
+  console.log(`     Fill Mode:      ${config.fillMode}`);
+  console.log(`     Slippage:       ${config.simulatedSlippageBps} bps`);
+  console.log(`     Gas Cost:       $${config.simulatedGasCost}`);
+  console.log(`     Export:         ${config.exportOnExit ? config.exportFormat : 'disabled'}`);
+}
+
+/**
+ * Check if backtest mode is enabled.
+ */
+export function isBacktest(): boolean {
+  return parseBoolEnv('BACKTEST', false);
+}
+
+/**
+ * Load backtest configuration from environment variables.
+ * Returns undefined if backtest is not enabled.
+ */
+export function loadBacktestConfig(): BacktestConfig | undefined {
+  if (!isBacktest()) return undefined;
+
+  const startRaw = process.env['BACKTEST_START'];
+  const endRaw = process.env['BACKTEST_END'];
+
+  if (!startRaw || !endRaw) {
+    throw new Error('BACKTEST_START and BACKTEST_END are required when BACKTEST=true (ISO date or epoch ms)');
+  }
+
+  const startTime = isNaN(Number(startRaw)) ? new Date(startRaw).getTime() : Number(startRaw);
+  const endTime = isNaN(Number(endRaw)) ? new Date(endRaw).getTime() : Number(endRaw);
+
+  if (isNaN(startTime) || isNaN(endTime) || startTime >= endTime) {
+    throw new Error(`Invalid backtest time range: ${startRaw} → ${endRaw}`);
+  }
+
+  return {
+    startTime,
+    endTime,
+    startingCapital: parseFloatEnv('BACKTEST_STARTING_CAPITAL', 1000),
+    targetWallets: [],  // Filled from BotConfig.targetWallets at runtime
+    simulatedSlippageBps: parseFloatEnv('BACKTEST_SLIPPAGE_BPS', 30),
+    simulatedGasCost: parseFloatEnv('BACKTEST_GAS_COST', 0.01),
+    speedMultiplier: parseFloatEnv('BACKTEST_SPEED', 100),
+    exportResults: parseBoolEnv('BACKTEST_EXPORT', true),
+    exportFormat: (optionalEnv('BACKTEST_EXPORT_FORMAT', 'json') as 'json' | 'csv'),
+  };
+}
+
+export function printBacktestConfig(config: BacktestConfig | undefined): void {
+  if (!config) {
+    console.log('   Backtest:         disabled');
+    return;
+  }
+  console.log('   Backtest:         ✅ ENABLED');
+  console.log(`     Start:          ${new Date(config.startTime).toISOString()}`);
+  console.log(`     End:            ${new Date(config.endTime).toISOString()}`);
+  console.log(`     Starting Cap:   $${config.startingCapital}`);
+  console.log(`     Speed:          ${config.speedMultiplier}x`);
+  console.log(`     Slippage:       ${config.simulatedSlippageBps} bps`);
+  console.log(`     Export:         ${config.exportResults ? config.exportFormat : 'disabled'}`);
+}
+
 export function printConfig(config: BotConfig): void {
   console.log('\n📋 Configuration:');
   console.log(`   Target wallets: ${config.targetWallets.length}`);
@@ -202,9 +300,61 @@ export function printConfig(config: BotConfig): void {
   console.log(`   WebSocket: ${config.useWebsocket ? 'enabled' : 'disabled'}`);
   console.log(`   Poll interval: ${config.pollInterval}ms`);
   console.log(`   Mode: ${config.dryRun ? '🟢 DRY RUN (simulation)' : '🔴 LIVE TRADING'}`);
+  if (isPaperTrading()) console.log('   Paper Trading:    ✅ ENABLED (virtual money)');
+  if (isBacktest()) console.log('   Backtest:         ✅ ENABLED (historical replay)');
   if (config.proxyUrl) console.log(`   Proxy: ${config.proxyUrl}`);
   if (config.wsRpcUrl) console.log(`   On-chain:         enabled (WS RPC)`);
   if (config.telegramBotToken && config.telegramChatId) console.log(`   Telegram:         enabled`);
   if (config.finfeedApiKey) console.log(`   FinFeedAPI:       enabled`);
+  if (config.bullpenEnabled) console.log('   Bullpen:          ✅ ENABLED');
   console.log('');
+}
+
+export function isIntelligenceEnabled(): boolean {
+  return parseBoolEnv('INTELLIGENCE_ENABLED', false);
+}
+
+export function loadIntelligenceConfig(): IntelligenceConfig | undefined {
+  if (!isIntelligenceEnabled()) return undefined;
+
+  const feedsRaw = process.env['INTELLIGENCE_RSS_FEEDS'] || '';
+  const rssFeeds = feedsRaw.split(',').map((f) => f.trim()).filter((f) => f.length > 0);
+
+  const categoriesRaw = process.env['INTELLIGENCE_CATEGORIES'] || '';
+  const validCategories: EventCategory[] = ['political', 'economic', 'sports', 'crypto', 'regulatory', 'technology', 'geopolitical', 'social', 'weather', 'entertainment', 'other'];
+  const categories = categoriesRaw
+    .split(',')
+    .map((c) => c.trim().toLowerCase())
+    .filter((c) => validCategories.includes(c as EventCategory)) as EventCategory[];
+
+  const keywordsRaw = process.env['INTELLIGENCE_WATCH_KEYWORDS'] || '';
+  const watchKeywords = keywordsRaw.split(',').map((k) => k.trim()).filter((k) => k.length > 0);
+
+  const useLLM = parseBoolEnv('INTELLIGENCE_USE_LLM', false);
+
+  return {
+    rssFeeds,
+    pollIntervalMs: parseFloatEnv('INTELLIGENCE_POLL_INTERVAL', 300_000),
+    alertThreshold: parseFloatEnv('INTELLIGENCE_ALERT_THRESHOLD', 0.5),
+    categories,
+    watchKeywords,
+    useLLM,
+    llmApiKey: process.env['INTELLIGENCE_LLM_API_KEY'] || process.env['AI_FILTER_API_KEY'] || undefined,
+    llmProvider: (process.env['INTELLIGENCE_LLM_PROVIDER'] || 'openai') as 'openai' | 'anthropic',
+    exportOnExit: parseBoolEnv('INTELLIGENCE_EXPORT', false),
+  };
+}
+
+export function printIntelligenceConfig(config: IntelligenceConfig | undefined): void {
+  if (!config) {
+    console.log('   Intelligence:     disabled');
+    return;
+  }
+  console.log('   Intelligence:     ✅ ENABLED');
+  console.log(`     RSS Feeds:      ${config.rssFeeds.length > 0 ? config.rssFeeds.length + ' custom' : 'defaults (8 feeds)'}`);
+  console.log(`     Poll Interval:  ${config.pollIntervalMs / 1000}s`);
+  console.log(`     Alert Threshold: ${(config.alertThreshold * 100).toFixed(0)}%`);
+  console.log(`     Categories:     ${config.categories.length > 0 ? config.categories.join(', ') : 'all'}`);
+  console.log(`     Watch Keywords: ${config.watchKeywords.length > 0 ? config.watchKeywords.join(', ') : 'none'}`);
+  console.log(`     LLM Analysis:   ${config.useLLM ? 'enabled' : 'disabled'}`);
 }

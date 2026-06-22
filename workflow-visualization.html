@@ -1,0 +1,1818 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Polymarket Copy-Trading Bot — Complete Workflow</title>
+<style>
+  :root {
+    --bg: #0a0e17;
+    --bg2: #111827;
+    --bg3: #1a2236;
+    --border: #1e293b;
+    --text: #e2e8f0;
+    --muted: #64748b;
+    --accent: #6366f1;
+    --accent2: #8b5cf6;
+    --green: #10b981;
+    --red: #ef4444;
+    --yellow: #f59e0b;
+    --blue: #3b82f6;
+    --cyan: #06b6d4;
+    --pink: #ec4899;
+    --orange: #f97316;
+    --teal: #14b8a6;
+    --lime: #84cc16;
+  }
+
+  * { margin: 0; padding: 0; box-sizing: border-box; }
+
+  body {
+    background: var(--bg);
+    color: var(--text);
+    font-family: 'SF Mono', 'Cascadia Code', 'JetBrains Mono', 'Fira Code', monospace;
+    font-size: 13px;
+    line-height: 1.6;
+    overflow-x: hidden;
+  }
+
+  /* ─── Header ─── */
+  .header {
+    background: linear-gradient(135deg, #1e1b4b 0%, #0f172a 50%, #0c1220 100%);
+    border-bottom: 1px solid var(--border);
+    padding: 32px 40px;
+    position: sticky;
+    top: 0;
+    z-index: 100;
+    backdrop-filter: blur(20px);
+  }
+
+  .header h1 {
+    font-size: 24px;
+    font-weight: 700;
+    background: linear-gradient(135deg, var(--accent), var(--cyan), var(--green));
+    -webkit-background-clip: text;
+    -webkit-text-fill-color: transparent;
+    background-clip: text;
+    margin-bottom: 4px;
+  }
+
+  .header .subtitle {
+    color: var(--muted);
+    font-size: 12px;
+    letter-spacing: 1px;
+    text-transform: uppercase;
+  }
+
+  .header .stats {
+    display: flex;
+    gap: 24px;
+    margin-top: 12px;
+  }
+
+  .header .stat {
+    display: flex;
+    align-items: center;
+    gap: 6px;
+    font-size: 12px;
+  }
+
+  .header .stat .dot {
+    width: 8px;
+    height: 8px;
+    border-radius: 50%;
+    display: inline-block;
+  }
+
+  /* ─── Layout ─── */
+  .container {
+    max-width: 1400px;
+    margin: 0 auto;
+    padding: 24px 40px 80px;
+  }
+
+  /* ─── Phase Sections ─── */
+  .phase {
+    margin-bottom: 40px;
+    border: 1px solid var(--border);
+    border-radius: 12px;
+    overflow: hidden;
+    background: var(--bg2);
+    transition: border-color 0.3s;
+  }
+
+  .phase:hover {
+    border-color: var(--accent);
+  }
+
+  .phase-header {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    padding: 16px 24px;
+    cursor: pointer;
+    user-select: none;
+    background: var(--bg3);
+    border-bottom: 1px solid var(--border);
+    transition: background 0.2s;
+  }
+
+  .phase-header:hover {
+    background: #1e293b;
+  }
+
+  .phase-header .left {
+    display: flex;
+    align-items: center;
+    gap: 12px;
+  }
+
+  .phase-number {
+    width: 32px;
+    height: 32px;
+    border-radius: 8px;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    font-weight: 700;
+    font-size: 14px;
+    color: white;
+  }
+
+  .phase-title {
+    font-size: 16px;
+    font-weight: 600;
+  }
+
+  .phase-tag {
+    font-size: 10px;
+    padding: 2px 8px;
+    border-radius: 4px;
+    text-transform: uppercase;
+    letter-spacing: 1px;
+    font-weight: 600;
+  }
+
+  .phase-body {
+    padding: 24px;
+    display: grid;
+    gap: 16px;
+  }
+
+  .phase.collapsed .phase-body { display: none; }
+
+  .chevron {
+    transition: transform 0.3s;
+    color: var(--muted);
+    font-size: 12px;
+  }
+
+  .phase.collapsed .chevron { transform: rotate(-90deg); }
+
+  /* ─── Module Cards ─── */
+  .modules-grid {
+    display: grid;
+    grid-template-columns: repeat(auto-fill, minmax(320px, 1fr));
+    gap: 16px;
+  }
+
+  .module-card {
+    background: var(--bg);
+    border: 1px solid var(--border);
+    border-radius: 10px;
+    padding: 20px;
+    transition: all 0.3s;
+    cursor: default;
+    position: relative;
+    overflow: hidden;
+  }
+
+  .module-card::before {
+    content: '';
+    position: absolute;
+    top: 0;
+    left: 0;
+    right: 0;
+    height: 3px;
+    background: var(--card-accent, var(--accent));
+    opacity: 0;
+    transition: opacity 0.3s;
+  }
+
+  .module-card:hover {
+    border-color: var(--card-accent, var(--accent));
+    transform: translateY(-2px);
+    box-shadow: 0 8px 32px rgba(0,0,0,0.3);
+  }
+
+  .module-card:hover::before { opacity: 1; }
+
+  .module-icon {
+    font-size: 20px;
+    margin-bottom: 8px;
+  }
+
+  .module-name {
+    font-size: 14px;
+    font-weight: 600;
+    color: var(--text);
+    margin-bottom: 4px;
+  }
+
+  .module-file {
+    font-size: 11px;
+    color: var(--muted);
+    font-family: monospace;
+    margin-bottom: 12px;
+  }
+
+  .module-desc {
+    font-size: 12px;
+    color: #94a3b8;
+    line-height: 1.5;
+    margin-bottom: 12px;
+  }
+
+  .module-ops {
+    display: flex;
+    flex-direction: column;
+    gap: 4px;
+  }
+
+  .op {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    font-size: 11px;
+    color: var(--muted);
+    padding: 4px 8px;
+    background: var(--bg2);
+    border-radius: 4px;
+    border-left: 2px solid var(--op-color, var(--accent));
+    transition: all 0.2s;
+  }
+
+  .op:hover {
+    background: var(--bg3);
+    color: var(--text);
+  }
+
+  .op-icon { font-size: 12px; }
+  .op-name { font-weight: 500; color: var(--text); }
+  .op-detail { color: var(--muted); }
+
+  /* ─── Data Flow Arrow ─── */
+  .flow-arrow {
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    padding: 8px 0;
+    color: var(--muted);
+    font-size: 20px;
+    position: relative;
+  }
+
+  .flow-arrow::before {
+    content: '';
+    position: absolute;
+    left: 50%;
+    top: 0;
+    bottom: 0;
+    width: 2px;
+    background: linear-gradient(to bottom, transparent, var(--accent), transparent);
+    transform: translateX(-50%);
+  }
+
+  .flow-label {
+    background: var(--bg2);
+    padding: 4px 12px;
+    border-radius: 12px;
+    font-size: 10px;
+    text-transform: uppercase;
+    letter-spacing: 1px;
+    color: var(--accent);
+    border: 1px solid var(--accent);
+    position: relative;
+    z-index: 1;
+  }
+
+  /* ─── Sequence Diagram ─── */
+  .sequence {
+    background: var(--bg);
+    border: 1px solid var(--border);
+    border-radius: 10px;
+    padding: 24px;
+    margin-top: 24px;
+    overflow-x: auto;
+  }
+
+  .seq-title {
+    font-size: 14px;
+    font-weight: 600;
+    margin-bottom: 16px;
+    color: var(--accent);
+  }
+
+  .seq-row {
+    display: grid;
+    grid-template-columns: 120px 1fr 120px;
+    gap: 0;
+    margin-bottom: 2px;
+    font-size: 11px;
+    min-height: 28px;
+    align-items: center;
+  }
+
+  .seq-actor {
+    padding: 4px 8px;
+    text-align: center;
+    font-weight: 600;
+    border-radius: 4px;
+    font-size: 10px;
+    white-space: nowrap;
+  }
+
+  .seq-arrow {
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    position: relative;
+    height: 28px;
+  }
+
+  .seq-arrow-line {
+    position: absolute;
+    top: 50%;
+    left: 0;
+    right: 0;
+    height: 1px;
+    background: var(--muted);
+  }
+
+  .seq-arrow-head {
+    position: absolute;
+    right: 0;
+    top: 50%;
+    transform: translateY(-50%);
+    width: 0;
+    height: 0;
+    border-left: 6px solid var(--muted);
+    border-top: 4px solid transparent;
+    border-bottom: 4px solid transparent;
+  }
+
+  .seq-arrow-label {
+    position: relative;
+    z-index: 1;
+    background: var(--bg);
+    padding: 2px 8px;
+    border-radius: 4px;
+    color: var(--text);
+    font-size: 10px;
+    white-space: nowrap;
+  }
+
+  /* ─── Config Table ─── */
+  .config-grid {
+    display: grid;
+    grid-template-columns: repeat(auto-fill, minmax(200px, 1fr));
+    gap: 8px;
+  }
+
+  .config-item {
+    display: flex;
+    flex-direction: column;
+    gap: 2px;
+    padding: 8px 12px;
+    background: var(--bg);
+    border: 1px solid var(--border);
+    border-radius: 6px;
+    font-size: 11px;
+  }
+
+  .config-key {
+    color: var(--cyan);
+    font-weight: 600;
+  }
+
+  .config-val {
+    color: var(--muted);
+  }
+
+  .config-required {
+    color: var(--red);
+    font-size: 9px;
+    text-transform: uppercase;
+  }
+
+  .config-optional {
+    color: var(--teal);
+    font-size: 9px;
+    text-transform: uppercase;
+  }
+
+  /* ─── Decision Tree ─── */
+  .decision {
+    display: flex;
+    flex-direction: column;
+    gap: 8px;
+    padding: 16px;
+    background: var(--bg);
+    border: 1px solid var(--border);
+    border-radius: 8px;
+  }
+
+  .decision-node {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    padding: 8px 12px;
+    border-radius: 6px;
+    font-size: 12px;
+  }
+
+  .decision-q {
+    background: var(--bg3);
+    border: 1px solid var(--accent);
+    color: var(--accent);
+    font-weight: 600;
+  }
+
+  .decision-yes {
+    background: rgba(16, 185, 129, 0.1);
+    border-left: 3px solid var(--green);
+    color: var(--green);
+    margin-left: 24px;
+  }
+
+  .decision-no {
+    background: rgba(239, 68, 68, 0.1);
+    border-left: 3px solid var(--red);
+    color: var(--red);
+    margin-left: 24px;
+  }
+
+  .decision-action {
+    background: var(--bg2);
+    border-left: 3px solid var(--blue);
+    margin-left: 48px;
+    padding: 6px 12px;
+    font-size: 11px;
+    color: var(--text);
+  }
+
+  /* ─── Connection Lines ─── */
+  .connections {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 8px;
+    margin-top: 12px;
+  }
+
+  .connection-chip {
+    display: flex;
+    align-items: center;
+    gap: 4px;
+    font-size: 10px;
+    padding: 3px 8px;
+    border-radius: 4px;
+    background: var(--bg);
+    border: 1px solid var(--border);
+    color: var(--muted);
+  }
+
+  .connection-chip .arrow { color: var(--accent); }
+
+  /* ─── Risk Matrix ─── */
+  .risk-table {
+    width: 100%;
+    border-collapse: collapse;
+    font-size: 11px;
+  }
+
+  .risk-table th {
+    text-align: left;
+    padding: 8px 12px;
+    background: var(--bg3);
+    border-bottom: 1px solid var(--border);
+    color: var(--muted);
+    font-weight: 600;
+    text-transform: uppercase;
+    letter-spacing: 0.5px;
+    font-size: 10px;
+  }
+
+  .risk-table td {
+    padding: 8px 12px;
+    border-bottom: 1px solid var(--border);
+  }
+
+  .risk-level {
+    display: inline-block;
+    padding: 2px 8px;
+    border-radius: 4px;
+    font-size: 10px;
+    font-weight: 600;
+  }
+
+  .risk-critical { background: rgba(239,68,68,0.2); color: var(--red); }
+  .risk-high { background: rgba(249,115,22,0.2); color: var(--orange); }
+  .risk-medium { background: rgba(245,158,11,0.2); color: var(--yellow); }
+  .risk-low { background: rgba(16,185,129,0.2); color: var(--green); }
+
+  /* ─── Timing Bars ─── */
+  .timing-bar {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    margin-bottom: 4px;
+    font-size: 11px;
+  }
+
+  .timing-label {
+    width: 140px;
+    text-align: right;
+    color: var(--muted);
+    font-size: 10px;
+  }
+
+  .timing-track {
+    flex: 1;
+    height: 16px;
+    background: var(--bg);
+    border-radius: 4px;
+    position: relative;
+    overflow: hidden;
+  }
+
+  .timing-fill {
+    height: 100%;
+    border-radius: 4px;
+    position: absolute;
+    left: 0;
+    top: 0;
+    transition: width 1s ease;
+  }
+
+  .timing-ms {
+    width: 60px;
+    text-align: right;
+    color: var(--muted);
+    font-size: 10px;
+  }
+
+  /* ─── Tabs ─── */
+  .tabs {
+    display: flex;
+    gap: 2px;
+    margin-bottom: 16px;
+    border-bottom: 1px solid var(--border);
+    padding-bottom: 0;
+  }
+
+  .tab {
+    padding: 8px 16px;
+    cursor: pointer;
+    font-size: 12px;
+    color: var(--muted);
+    border-bottom: 2px solid transparent;
+    transition: all 0.2s;
+    user-select: none;
+  }
+
+  .tab:hover { color: var(--text); }
+  .tab.active {
+    color: var(--accent);
+    border-bottom-color: var(--accent);
+  }
+
+  .tab-content { display: none; }
+  .tab-content.active { display: block; }
+
+  /* ─── Animations ─── */
+  @keyframes pulse {
+    0%, 100% { opacity: 1; }
+    50% { opacity: 0.5; }
+  }
+
+  .pulse { animation: pulse 2s ease-in-out infinite; }
+
+  @keyframes flow {
+    0% { background-position: 0% 50%; }
+    100% { background-position: 200% 50%; }
+  }
+
+  .flow-line {
+    background: linear-gradient(90deg, transparent, var(--accent), transparent);
+    background-size: 200% 100%;
+    animation: flow 2s linear infinite;
+  }
+
+  /* ─── Responsive ─── */
+  @media (max-width: 768px) {
+    .container { padding: 16px; }
+    .modules-grid { grid-template-columns: 1fr; }
+    .header { padding: 20px; }
+    .header .stats { flex-wrap: wrap; }
+  }
+</style>
+</head>
+<body>
+
+<!-- ═══════════════════════════════════════════════ -->
+<!-- HEADER -->
+<!-- ═══════════════════════════════════════════════ -->
+<div class="header">
+  <h1>⚡ Polymarket Copy-Trading Bot</h1>
+  <div class="subtitle">Complete Architecture &amp; Data Flow — 22 TypeScript Modules</div>
+  <div class="stats">
+    <div class="stat"><span class="dot" style="background:var(--green)"></span> WebSocket (instant)</div>
+    <div class="stat"><span class="dot" style="background:var(--blue)"></span> REST Polling (3s)</div>
+    <div class="stat"><span class="dot" style="background:var(--yellow)"></span> On-Chain (settlement)</div>
+    <div class="stat"><span class="dot" style="background:var(--accent)"></span> AI Filter</div>
+    <div class="stat"><span class="dot" style="background:var(--pink)"></span> Risk Guard</div>
+    <div class="stat"><span class="dot" style="background:var(--cyan)"></span> Execution</div>
+  </div>
+</div>
+
+<div class="container">
+
+<!-- ═══════════════════════════════════════════════ -->
+<!-- TABS -->
+<!-- ═══════════════════════════════════════════════ -->
+<div class="tabs">
+  <div class="tab active" onclick="switchTab('architecture')">🏗️ Architecture</div>
+  <div class="tab" onclick="switchTab('sequence')">📊 Sequence Diagram</div>
+  <div class="tab" onclick="switchTab('decisions')">🔀 Decision Flow</div>
+  <div class="tab" onclick="switchTab('timing')">⏱️ Timing</div>
+  <div class="tab" onclick="switchTab('config')">⚙️ Configuration</div>
+  <div class="tab" onclick="switchTab('risks')">🛡️ Risk Matrix</div>
+</div>
+
+<!-- ═══════════════════════════════════════════════ -->
+<!-- TAB: ARCHITECTURE -->
+<!-- ═══════════════════════════════════════════════ -->
+<div id="tab-architecture" class="tab-content active">
+
+<!-- Phase 1: Data Ingestion -->
+<div class="phase" id="phase-1">
+  <div class="phase-header" onclick="togglePhase('phase-1')">
+    <div class="left">
+      <div class="phase-number" style="background:var(--green)">1</div>
+      <div>
+        <div class="phase-title">Data Ingestion — Trade Detection</div>
+        <div style="color:var(--muted);font-size:11px">Three parallel detection streams feeding into unified trade queue</div>
+      </div>
+    </div>
+    <div style="display:flex;align-items:center;gap:8px">
+      <span class="phase-tag" style="background:rgba(16,185,129,0.2);color:var(--green)">3 modules</span>
+      <span class="chevron">▼</span>
+    </div>
+  </div>
+  <div class="phase-body">
+    <div class="modules-grid">
+
+      <!-- CLOB WebSocket -->
+      <div class="module-card" style="--card-accent:var(--green)">
+        <div class="module-icon">🔌</div>
+        <div class="module-name">CLOB WebSocket</div>
+        <div class="module-file">src/monitor.ts</div>
+        <div class="module-desc">
+          Real-time price stream from Polymarket CLOB. Detects price movements
+          and triggers immediate Data API polling for near-instant trade detection.
+        </div>
+        <div class="module-ops">
+          <div class="op" style="--op-color:var(--green)">
+            <span class="op-icon">📡</span>
+            <span class="op-name">connect()</span>
+            <span class="op-detail">— wss://ws-subscriptions-clob.polymarket.com/ws/market</span>
+          </div>
+          <div class="op" style="--op-color:var(--green)">
+            <span class="op-icon">📨</span>
+            <span class="op-name">handleWsMessage()</span>
+            <span class="op-detail">— Parse last_trade_price events</span>
+          </div>
+          <div class="op" style="--op-color:var(--yellow)">
+            <span class="op-icon">⚡</span>
+            <span class="op-name">triggerImmediatePoll()</span>
+            <span class="op-detail">— 500ms debounce, 100ms batch delay</span>
+          </div>
+          <div class="op" style="--op-color:var(--blue)">
+            <span class="op-icon">🔄</span>
+            <span class="op-name">subscribe()</span>
+            <span class="op-detail">— Subscribe to all target market asset IDs</span>
+          </div>
+        </div>
+        <div class="connections">
+          <div class="connection-chip"><span class="arrow">→</span> Data API (immediate poll)</div>
+          <div class="connection-chip"><span class="arrow">→</span> pollAllWallets()</div>
+        </div>
+      </div>
+
+      <!-- REST Polling -->
+      <div class="module-card" style="--card-accent:var(--blue)">
+        <div class="module-icon">🔄</div>
+        <div class="module-name">REST Polling</div>
+        <div class="module-file">src/monitor.ts</div>
+        <div class="module-desc">
+          Polls Polymarket Data API every 3 seconds for each target wallet.
+          Primary trade detection mechanism. Deduplicates via seenTradeIds Set.
+        </div>
+        <div class="module-ops">
+          <div class="op" style="--op-color:var(--blue)">
+            <span class="op-icon">📊</span>
+            <span class="op-name">pollWallet()</span>
+            <span class="op-detail">— GET /activity?user={address}&limit=20</span>
+          </div>
+          <div class="op" style="--op-color:var(--blue)">
+            <span class="op-icon">🔍</span>
+            <span class="op-name">parseTrade()</span>
+            <span class="op-detail">— Convert DataApiTrade → ParsedTrade</span>
+          </div>
+          <div class="op" style="--op-color:var(--green)">
+            <span class="op-icon">🛡️</span>
+            <span class="op-name">seenTradeIds</span>
+            <span class="op-detail">— Deduplication Set (prevents double-processing)</span>
+          </div>
+          <div class="op" style="--op-color:var(--yellow)">
+            <span class="op-icon">🔒</span>
+            <span class="op-name">polling guard</span>
+            <span class="op-detail">— Prevents concurrent pollAllWallets()</span>
+          </div>
+        </div>
+        <div class="connections">
+          <div class="connection-chip"><span class="arrow">←</span> WebSocket (trigger)</div>
+          <div class="connection-chip"><span class="arrow">→</span> onTrade callback</div>
+        </div>
+      </div>
+
+      <!-- On-Chain Monitor -->
+      <div class="module-card" style="--card-accent:var(--yellow)">
+        <div class="module-icon">⛓️</div>
+        <div class="module-name">On-Chain Settlement Monitor</div>
+        <div class="module-file">src/onchain.ts</div>
+        <div class="module-desc">
+          Monitors CTF Exchange &amp; NegRiskCtfExchange contracts on Polygon.
+          Verifies trade settlement. Slower than CLOB — used for verification only.
+        </div>
+        <div class="module-ops">
+          <div class="op" style="--op-color:var(--yellow)">
+            <span class="op-icon">📝</span>
+            <span class="op-name">OrderFilled events</span>
+            <span class="op-detail">— CTFExchange + NegRiskCtfExchange</span>
+          </div>
+          <div class="op" style="--op-color:var(--yellow)">
+            <span class="op-icon">🔎</span>
+            <span class="op-name">matchTarget()</span>
+            <span class="op-detail">— Check maker/taker against target wallets</span>
+          </div>
+          <div class="op" style="--op-color:var(--yellow)">
+            <span class="op-icon">🔄</span>
+            <span class="op-name">scheduleReconnect()</span>
+            <span class="op-detail">— Auto-reconnect on WS drop (10s delay)</span>
+          </div>
+        </div>
+        <div class="connections">
+          <div class="connection-chip"><span class="arrow">→</span> onFill callback (verification)</div>
+          <div class="connection-chip"><span class="arrow">←</span> WS_RPC_URL (Alchemy/Infura)</div>
+        </div>
+      </div>
+
+    </div>
+  </div>
+</div>
+
+<!-- Flow Arrow -->
+<div class="flow-arrow">
+  <div class="flow-label">Trade Detected → Route to Pipeline</div>
+</div>
+
+<!-- Phase 2: Trade Processing -->
+<div class="phase" id="phase-2">
+  <div class="phase-header" onclick="togglePhase('phase-2')">
+    <div class="left">
+      <div class="phase-number" style="background:var(--accent)">2</div>
+      <div>
+        <div class="phase-title">Trade Processing Pipeline</div>
+        <div style="color:var(--muted);font-size:11px">Filter → AI Analysis → Risk Check → Execute — the core decision chain</div>
+      </div>
+    </div>
+    <div style="display:flex;align-items:center;gap:8px">
+      <span class="phase-tag" style="background:rgba(99,102,241,0.2);color:var(--accent)">4 modules</span>
+      <span class="chevron">▼</span>
+    </div>
+  </div>
+  <div class="phase-body">
+    <div class="modules-grid">
+
+      <!-- Trade Handler (index.ts) -->
+      <div class="module-card" style="--card-accent:var(--accent)">
+        <div class="module-icon">🎯</div>
+        <div class="module-name">Trade Handler / Router</div>
+        <div class="module-file">src/index.ts</div>
+        <div class="module-desc">
+          Central orchestrator. Receives detected trades, runs the full pipeline:
+          skip BUY-only trades → AI filter → risk check → execute copy trade.
+        </div>
+        <div class="module-ops">
+          <div class="op" style="--op-color:var(--red)">
+            <span class="op-icon">🚫</span>
+            <span class="op-name">Skip BUY trades</span>
+            <span class="op-detail">— Only copy SELL signals from whales</span>
+          </div>
+          <div class="op" style="--op-color:var(--accent)">
+            <span class="op-icon">🤖</span>
+            <span class="op-name">AI Filter Gate</span>
+            <span class="op-detail">— if (aiFilter) → analyzeTrade()</span>
+          </div>
+          <div class="op" style="--op-color:var(--pink)">
+            <span class="op-icon">🛡️</span>
+            <span class="op-name">Risk Gate</span>
+            <span class="op-detail">— checkTrade() before execution</span>
+          </div>
+          <div class="op" style="--op-color:var(--cyan)">
+            <span class="op-icon">🚀</span>
+            <span class="op-name">Execute Copy</span>
+            <span class="op-detail">— Execute copy trade via CLOB API</span>
+          </div>
+        </div>
+      </div>
+
+      <!-- AI Filter -->
+      <div class="module-card" style="--card-accent:var(--accent2)">
+        <div class="module-icon">🧠</div>
+        <div class="module-name">AI Trade Filter</div>
+        <div class="module-file">src/ai-filter.ts</div>
+        <div class="module-desc">
+          LLM-powered analysis. Estimates true probability, compares to market price.
+          Supports OpenAI, Anthropic, OpenRouter, or custom endpoints.
+          Fetches market context + cross-platform consensus in parallel.
+        </div>
+        <div class="module-ops">
+          <div class="op" style="--op-color:var(--accent2)">
+            <span class="op-icon">📊</span>
+            <span class="op-name">fetchMarketContext()</span>
+            <span class="op-detail">— Polymarket API: volume, liquidity, history</span>
+          </div>
+          <div class="op" style="--op-color:var(--cyan)">
+            <span class="op-icon">🌐</span>
+            <span class="op-name">fetchConsensus()</span>
+            <span class="op-detail">— Manifold + Kalshi + FinFeedAPI (parallel)</span>
+          </div>
+          <div class="op" style="--op-color:var(--accent2)">
+            <span class="op-icon">💬</span>
+            <span class="op-name">callLLM()</span>
+            <span class="op-detail">— Prompt with context → probability estimate</span>
+          </div>
+          <div class="op" style="--op-color:var(--green)">
+            <span class="op-icon">✅</span>
+            <span class="op-name">Ensemble voting</span>
+            <span class="op-detail">— Dual-model consensus (optional secondModel)</span>
+          </div>
+          <div class="op" style="--op-color:var(--yellow)">
+            <span class="op-icon">💾</span>
+            <span class="op-name">Cache (15min TTL)</span>
+            <span class="op-detail">— Avoids re-analyzing same market</span>
+          </div>
+          <div class="op" style="--op-color:var(--muted)">
+            <span class="op-icon">⚡</span>
+            <span class="op-name">Rate limiter</span>
+            <span class="op-detail">— Max 10 calls/min, 30s timeout</span>
+          </div>
+        </div>
+        <div class="connections">
+          <div class="connection-chip"><span class="arrow">←</span> Trade data</div>
+          <div class="connection-chip"><span class="arrow">→</span> AIFilterResult (approve/reject)</div>
+          <div class="connection-chip"><span class="arrow">←</span> cross-platform.ts</div>
+          <div class="connection-chip"><span class="arrow">←</span> proxy.ts (fetch)</div>
+        </div>
+      </div>
+
+      <!-- Risk Management -->
+      <div class="module-card" style="--card-accent:var(--pink)">
+        <div class="module-icon">🛡️</div>
+        <div class="module-name">Risk Management</div>
+        <div class="module-file">src/risk.ts</div>
+        <div class="module-desc">
+          Multi-layer risk controls. Blocks trades that violate limits.
+          Tracks session P&L, drawdown, consecutive losses, per-market caps.
+        </div>
+        <div class="module-ops">
+          <div class="op" style="--op-color:var(--pink)">
+            <span class="op-icon">📏</span>
+            <span class="op-name">Position sizing</span>
+            <span class="op-detail">— multiplier × target size, clamped to min/max</span>
+          </div>
+          <div class="op" style="--op-color:var(--red)">
+            <span class="op-icon">🚫</span>
+            <span class="op-name">Session notional cap</span>
+            <span class="op-detail">— Max $1,000 total (configurable)</span>
+          </div>
+          <div class="op" style="--op-color:var(--red)">
+            <span class="op-icon">🚫</span>
+            <span class="op-name">Per-market cap</span>
+            <span class="op-detail">— Max $200 per market (configurable)</span>
+          </div>
+          <div class="op" style="--op-color:var(--orange)">
+            <span class="op-icon">📉</span>
+            <span class="op-name">Daily loss limit</span>
+            <span class="op-detail">— 5% daily loss → halt (configurable)</span>
+          </div>
+          <div class="op" style="--op-color:var(--red)">
+            <span class="op-icon">🛑</span>
+            <span class="op-name">Max drawdown</span>
+            <span class="op-detail">— 25% from peak → halt (configurable)</span>
+          </div>
+          <div class="op" style="--op-color:var(--red)">
+            <span class="op-icon">💀</span>
+            <span class="op-name">Total loss halt</span>
+            <span class="op-detail">— 40% total loss → permanent halt</span>
+          </div>
+        </div>
+      </div>
+
+      <!-- Trade Execution -->
+      <div class="module-card" style="--card-accent:var(--cyan)">
+        <div class="module-icon">🚀</div>
+        <div class="module-name">Trade Execution</div>
+        <div class="module-file">src/executor.ts</div>
+        <div class="module-desc">
+          Executes copy trades via Polymarket CLOB API. Signs orders with
+          EIP-712, handles FOK/GTC/FAK order types, tracks fills.
+        </div>
+        <div class="module-ops">
+          <div class="op" style="--op-color:var(--cyan)">
+            <span class="op-icon">📝</span>
+            <span class="op-name">createOrder()</span>
+            <span class="op-detail">— Build signed CLOB order</span>
+          </div>
+          <div class="op" style="--op-color:var(--cyan)">
+            <span class="op-icon">🔐</span>
+            <span class="op-name">signOrder()</span>
+            <span class="op-detail">— EIP-712 signature with private key</span>
+          </div>
+          <div class="op" style="--op-color:var(--green)">
+            <span class="op-icon">✅</span>
+            <span class="op-name">submitOrder()</span>
+            <span class="op-detail">— POST to CLOB /order endpoint</span>
+          </div>
+          <div class="op" style="--op-color:var(--yellow)">
+            <span class="op-icon">📊</span>
+            <span class="op-name">getOrderBook()</span>
+            <span class="op-detail">— Check liquidity before sizing</span>
+          </div>
+        </div>
+      </div>
+
+    </div>
+  </div>
+</div>
+
+<!-- Flow Arrow -->
+<div class="flow-arrow">
+  <div class="flow-label">Trade Executed → Notify & Track</div>
+</div>
+
+<!-- Phase 3: Notifications & Monitoring -->
+<div class="phase" id="phase-3">
+  <div class="phase-header" onclick="togglePhase('phase-3')">
+    <div class="left">
+      <div class="phase-number" style="background:var(--pink)">3</div>
+      <div>
+        <div class="phase-title">Notifications &amp; Monitoring</div>
+        <div style="color:var(--muted);font-size:11px">Telegram alerts, session stats, position tracking, status reports</div>
+      </div>
+    </div>
+    <div style="display:flex;align-items:center;gap:8px">
+      <span class="phase-tag" style="background:rgba(236,72,153,0.2);color:var(--pink)">2 modules</span>
+      <span class="chevron">▼</span>
+    </div>
+  </div>
+  <div class="phase-body">
+    <div class="modules-grid">
+
+      <!-- Telegram -->
+      <div class="module-card" style="--card-accent:var(--pink)">
+        <div class="module-icon">📱</div>
+        <div class="module-name">Telegram Notifications</div>
+        <div class="module-file">src/telegram.ts</div>
+        <div class="module-desc">
+          Real-time alerts via Telegram Bot API. Rate-limited (20 msg/min),
+          batched queue, Markdown escaping, plain text fallback.
+        </div>
+        <div class="module-ops">
+          <div class="op" style="--op-color:var(--green)">
+            <span class="op-icon">🔍</span>
+            <span class="op-name">notifyTrade()</span>
+            <span class="op-detail">— Whale activity detected</span>
+          </div>
+          <div class="op" style="--op-color:var(--accent)">
+            <span class="op-icon">🤖</span>
+            <span class="op-name">notifyAI()</span>
+            <span class="op-detail">— AI approved/rejected with reasoning</span>
+          </div>
+          <div class="op" style="--op-color:var(--cyan)">
+            <span class="op-icon">🚀</span>
+            <span class="op-name">notifyExecution()</span>
+            <span class="op-detail">— Copy trade filled</span>
+          </div>
+          <div class="op" style="--op-color:var(--red)">
+            <span class="op-icon">🛡️</span>
+            <span class="op-name">notifyRisk()</span>
+            <span class="op-detail">— blocked / drawdown / halt / cap</span>
+          </div>
+          <div class="op" style="--op-color:var(--orange)">
+            <span class="op-icon">🚨</span>
+            <span class="op-name">notifyError()</span>
+            <span class="op-detail">— Trade failures, AI errors</span>
+          </div>
+          <div class="op" style="--op-color:var(--blue)">
+            <span class="op-icon">📊</span>
+            <span class="op-name">notifyStatus()</span>
+            <span class="op-detail">— Periodic report (every 10 min)</span>
+          </div>
+        </div>
+        <div class="connections">
+          <div class="connection-chip"><span class="arrow">←</span> All pipeline events</div>
+          <div class="connection-chip"><span class="arrow">→</span> Telegram Bot API</div>
+        </div>
+      </div>
+
+      <!-- Position Tracker -->
+      <div class="module-card" style="--card-accent:var(--orange)">
+        <div class="module-icon">📈</div>
+        <div class="module-name">Position &amp; Session Tracker</div>
+        <div class="module-file">src/positions.ts + src/types.ts</div>
+        <div class="module-desc">
+          Tracks open positions per market, session P&L, win/loss streaks,
+          and generates periodic status reports with all session stats.
+        </div>
+        <div class="module-ops">
+          <div class="op" style="--op-color:var(--orange)">
+            <span class="op-icon">📊</span>
+            <span class="op-name">updatePosition()</span>
+            <span class="op-detail">— Track shares, avg price, notional</span>
+          </div>
+          <div class="op" style="--op-color:var(--orange)">
+            <span class="op-icon">💰</span>
+            <span class="op-name">calculatePnl()</span>
+            <span class="op-detail">— Unrealized + realized P&L</span>
+          </div>
+          <div class="op" style="--op-color:var(--orange)">
+            <span class="op-icon">📋</span>
+            <span class="op-name">printStatusReport()</span>
+            <span class="op-detail">— Console + Telegram (every 10 min)</span>
+          </div>
+        </div>
+      </div>
+
+    </div>
+  </div>
+</div>
+
+<!-- Flow Arrow -->
+<div class="flow-arrow">
+  <div class="flow-label">Supporting Infrastructure</div>
+</div>
+
+<!-- Phase 4: Infrastructure -->
+<div class="phase" id="phase-4">
+  <div class="phase-header" onclick="togglePhase('phase-4')">
+    <div class="left">
+      <div class="phase-number" style="background:var(--cyan)">4</div>
+      <div>
+        <div class="phase-title">Infrastructure &amp; Support Modules</div>
+        <div style="color:var(--muted);font-size:11px">Cross-platform data, proxy, config, logging, leaderboard discovery</div>
+      </div>
+    </div>
+    <div style="display:flex;align-items:center;gap:8px">
+      <span class="phase-tag" style="background:rgba(6,182,212,0.2);color:var(--cyan)">8 modules</span>
+      <span class="chevron">▼</span>
+    </div>
+  </div>
+  <div class="phase-body">
+    <div class="modules-grid">
+
+      <!-- Cross-Platform -->
+      <div class="module-card" style="--card-accent:var(--cyan)">
+        <div class="module-icon">🌐</div>
+        <div class="module-name">Cross-Platform Consensus</div>
+        <div class="module-file">src/cross-platform.ts</div>
+        <div class="module-desc">
+          Queries Manifold (free), Kalshi (free), and FinFeedAPI (paid) in parallel.
+          Calculates consensus probability and spread across platforms.
+        </div>
+        <div class="module-ops">
+          <div class="op" style="--op-color:var(--green)">
+            <span class="op-icon">🟢</span>
+            <span class="op-name">searchManifold()</span>
+            <span class="op-detail">— Free, /v0/search-markets</span>
+          </div>
+          <div class="op" style="--op-color:var(--blue)">
+            <span class="op-icon">🔵</span>
+            <span class="op-name">searchKalshi()</span>
+            <span class="op-detail">— Free, /trade-api/v2/events</span>
+          </div>
+          <div class="op" style="--op-color:var(--yellow)">
+            <span class="op-icon">🟡</span>
+            <span class="op-name">searchFinFeed()</span>
+            <span class="op-detail">— Paid, /v1/markets/polymarket/active</span>
+          </div>
+          <div class="op" style="--op-color:var(--accent)">
+            <span class="op-icon">📊</span>
+            <span class="op-name">fetchConsensus()</span>
+            <span class="op-detail">— Aggregate: avg probability, spread, source count</span>
+          </div>
+        </div>
+      </div>
+
+      <!-- Proxy -->
+      <div class="module-card" style="--card-accent:var(--teal)">
+        <div class="module-icon">🔒</div>
+        <div class="module-name">HTTP Proxy</div>
+        <div class="module-file">src/proxy.ts</div>
+        <div class="module-desc">
+          Routes all outbound HTTP through SOCKS5/HTTP/HTTPS proxy.
+          Provides proxyFetch() wrapper used by all API calls.
+        </div>
+        <div class="module-ops">
+          <div class="op" style="--op-color:var(--teal)">
+            <span class="op-icon">🔧</span>
+            <span class="op-name">configureProxy()</span>
+            <span class="op-detail">— SOCKS5, HTTP, or HTTPS agent</span>
+          </div>
+          <div class="op" style="--op-color:var(--teal)">
+            <span class="op-icon">🌐</span>
+            <span class="op-name">proxyFetch()</span>
+            <span class="op-detail">— Drop-in fetch() replacement</span>
+          </div>
+        </div>
+      </div>
+
+      <!-- Config -->
+      <div class="module-card" style="--card-accent:var(--muted)">
+        <div class="module-icon">⚙️</div>
+        <div class="module-name">Configuration</div>
+        <div class="module-file">src/config.ts</div>
+        <div class="module-desc">
+          Loads .env, validates all settings, prints config summary.
+          Handles BotConfig, AIFilterConfig, LeaderboardConfig.
+        </div>
+        <div class="module-ops">
+          <div class="op" style="--op-color:var(--muted)">
+            <span class="op-icon">📋</span>
+            <span class="op-name">loadConfig()</span>
+            <span class="op-detail">— 25+ env vars, with validation</span>
+          </div>
+          <div class="op" style="--op-color:var(--muted)">
+            <span class="op-icon">🤖</span>
+            <span class="op-name">loadAIConfig()</span>
+            <span class="op-detail">— AI filter settings</span>
+          </div>
+          <div class="op" style="--op-color:var(--muted)">
+            <span class="op-icon">🏆</span>
+            <span class="op-name">loadLeaderboardConfig()</span>
+            <span class="op-detail">— Auto-discovery settings</span>
+          </div>
+        </div>
+      </div>
+
+      <!-- Logger -->
+      <div class="module-card" style="--card-accent:var(--muted)">
+        <div class="module-icon">📝</div>
+        <div class="module-name">Logger</div>
+        <div class="module-file">src/logger.ts</div>
+        <div class="module-desc">
+          Structured logging with levels (debug/info/warn/error).
+          Color-coded console output with timestamps.
+        </div>
+      </div>
+
+      <!-- Leaderboard -->
+      <div class="module-card" style="--card-accent:var(--lime)">
+        <div class="module-icon">🏆</div>
+        <div class="module-name">Leaderboard / Auto-Discovery</div>
+        <div class="module-file">src/leaderboard.ts</div>
+        <div class="module-desc">
+          Automatically discovers top traders from Polymarket leaderboard.
+          Filters by P&L, win rate, trade count. Refreshes periodically.
+        </div>
+        <div class="module-ops">
+          <div class="op" style="--op-color:var(--lime)">
+            <span class="op-icon">🔍</span>
+            <span class="op-name">fetchLeaderboard()</span>
+            <span class="op-detail">— Polymarket leaderboard API</span>
+          </div>
+          <div class="op" style="--op-color:var(--lime)">
+            <span class="op-icon">📊</span>
+            <span class="op-name">scoreTrader()</span>
+            <span class="op-detail">— Composite score: PnL × winRate × volume</span>
+          </div>
+          <div class="op" style="--op-color:var(--lime)">
+            <span class="op-icon">🔄</span>
+            <span class="op-name">refreshDiscovery()</span>
+            <span class="op-detail">— Every 60 min (configurable)</span>
+          </div>
+        </div>
+      </div>
+
+      <!-- Paper Trading -->
+      <div class="module-card" style="--card-accent:var(--orange)">
+        <div class="module-icon">📝</div>
+        <div class="module-name">Paper Trading</div>
+        <div class="module-file">src/paper-trading.ts</div>
+        <div class="module-desc">
+          Simulated trading mode. Virtual portfolio, no real orders.
+          Full trade journal with P&L tracking and export.
+        </div>
+      </div>
+
+      <!-- Market Intelligence -->
+      <div class="module-card" style="--card-accent:var(--accent)">
+        <div class="module-icon">📰</div>
+        <div class="module-name">Market Intelligence</div>
+        <div class="module-file">src/intelligence.ts</div>
+        <div class="module-desc">
+          RSS/news monitoring for market-moving events. Sentiment analysis,
+          event correlation tracking, impact scoring.
+        </div>
+      </div>
+
+      <!-- Types -->
+      <div class="module-card" style="--card-accent:var(--muted)">
+        <div class="module-icon">📐</div>
+        <div class="module-name">Type Definitions</div>
+        <div class="module-file">src/types.ts</div>
+        <div class="module-desc">
+          All TypeScript interfaces: BotConfig, ParsedTrade, RiskCheckResult,
+          AIFilterResult, Position, SessionStats, MarketEvent, etc.
+        </div>
+      </div>
+
+    </div>
+  </div>
+</div>
+
+</div><!-- end tab-architecture -->
+
+<!-- ═══════════════════════════════════════════════ -->
+<!-- TAB: SEQUENCE DIAGRAM -->
+<!-- ═══════════════════════════════════════════════ -->
+<div id="tab-sequence" class="tab-content">
+  <div class="sequence">
+    <div class="seq-title">📊 Trade Lifecycle — From Detection to Execution</div>
+
+    <!-- Actors header -->
+    <div class="seq-row" style="margin-bottom:12px">
+      <div class="seq-actor" style="background:rgba(16,185,129,0.2);color:var(--green)">CLOB WS</div>
+      <div></div>
+      <div class="seq-actor" style="background:rgba(59,130,246,0.2);color:var(--blue)">REST Poll</div>
+    </div>
+
+    <div style="display:flex;flex-direction:column;gap:4px">
+      <!-- Step 1 -->
+      <div style="display:flex;align-items:center;gap:12px;padding:6px 0;font-size:12px">
+        <div style="width:32px;text-align:center;font-size:16px">1️⃣</div>
+        <div style="width:100px;color:var(--green);font-weight:600;font-size:11px">WebSocket</div>
+        <div style="flex:1;background:var(--bg3);padding:8px 12px;border-radius:6px;border-left:3px solid var(--green)">
+          <div style="font-weight:600">Price Movement Detected</div>
+          <div style="color:var(--muted);font-size:11px">last_trade_price event from CLOB WebSocket</div>
+        </div>
+        <div style="width:60px;text-align:right;color:var(--green);font-size:10px;font-weight:600">&lt;100ms</div>
+      </div>
+
+      <!-- Step 2 -->
+      <div style="display:flex;align-items:center;gap:12px;padding:6px 0;font-size:12px">
+        <div style="width:32px;text-align:center;font-size:16px">2️⃣</div>
+        <div style="width:100px;color:var(--yellow);font-weight:600;font-size:11px">triggerPoll</div>
+        <div style="flex:1;background:var(--bg3);padding:8px 12px;border-radius:6px;border-left:3px solid var(--yellow)">
+          <div style="font-weight:600">WS-Triggered Immediate Poll</div>
+          <div style="color:var(--muted);font-size:11px">500ms debounce → 100ms batch → pollAllWallets() (guard: no concurrent)</div>
+        </div>
+        <div style="width:60px;text-align:right;color:var(--yellow);font-size:10px;font-weight:600">~600ms</div>
+      </div>
+
+      <!-- Step 3 -->
+      <div style="display:flex;align-items:center;gap:12px;padding:6px 0;font-size:12px">
+        <div style="width:32px;text-align:center;font-size:16px">3️⃣</div>
+        <div style="width:100px;color:var(--blue);font-weight:600;font-size:11px">Data API</div>
+        <div style="flex:1;background:var(--bg3);padding:8px 12px;border-radius:6px;border-left:3px solid var(--blue)">
+          <div style="font-weight:600">Poll Wallet Activity</div>
+          <div style="color:var(--muted);font-size:11px">GET /activity?user={addr} — parse trades — deduplicate via seenTradeIds</div>
+        </div>
+        <div style="width:60px;text-align:right;color:var(--blue);font-size:10px;font-weight:600">~300ms</div>
+      </div>
+
+      <!-- Step 4 -->
+      <div style="display:flex;align-items:center;gap:12px;padding:6px 0;font-size:12px">
+        <div style="width:32px;text-align:center;font-size:16px">4️⃣</div>
+        <div style="width:100px;color:var(--red);font-weight:600;font-size:11px">Filter</div>
+        <div style="flex:1;background:var(--bg3);padding:8px 12px;border-radius:6px;border-left:3px solid var(--red)">
+          <div style="font-weight:600">Skip BUY Trades</div>
+          <div style="color:var(--muted);font-size:11px">Only SELL trades from target wallets proceed. BUY trades are logged only.</div>
+        </div>
+        <div style="width:60px;text-align:right;color:var(--muted);font-size:10px">~0ms</div>
+      </div>
+
+      <!-- Step 5 -->
+      <div style="display:flex;align-items:center;gap:12px;padding:6px 0;font-size:12px">
+        <div style="width:32px;text-align:center;font-size:16px">5️⃣</div>
+        <div style="width:100px;color:var(--accent);font-weight:600;font-size:11px">AI Filter</div>
+        <div style="flex:1;background:var(--bg3);padding:8px 12px;border-radius:6px;border-left:3px solid var(--accent)">
+          <div style="font-weight:600">LLM-Powered Trade Analysis</div>
+          <div style="color:var(--muted);font-size:11px">
+            <strong>Parallel:</strong> fetchMarketContext() + fetchConsensus() (Manifold + Kalshi + FinFeedAPI)<br>
+            <strong>Then:</strong> Build prompt with market data + consensus → callLLM() → parse probability<br>
+            <strong>Gate:</strong> probability × confidence > minEdge? → Approve / Reject<br>
+            <strong>Cache:</strong> 15min TTL (skip re-analysis of same market)
+          </div>
+        </div>
+        <div style="width:60px;text-align:right;color:var(--accent);font-size:10px;font-weight:600">~1.5s</div>
+      </div>
+
+      <!-- Step 6 -->
+      <div style="display:flex;align-items:center;gap:12px;padding:6px 0;font-size:12px">
+        <div style="width:32px;text-align:center;font-size:16px">6️⃣</div>
+        <div style="width:100px;color:var(--pink);font-weight:600;font-size:11px">Risk Check</div>
+        <div style="flex:1;background:var(--bg3);padding:8px 12px;border-radius:6px;border-left:3px solid var(--pink)">
+          <div style="font-weight:600">Multi-Layer Risk Validation</div>
+          <div style="color:var(--muted);font-size:11px">
+            ✓ Position sizing (multiplier × target, clamped min/max)<br>
+            ✓ Session notional cap ($1,000 default)<br>
+            ✓ Per-market notional cap ($200 default)<br>
+            ✓ Daily loss limit (5% default)<br>
+            ✓ Max drawdown from peak (25% default)<br>
+            ✓ Total loss halt (40% default)
+          </div>
+        </div>
+        <div style="width:60px;text-align:right;color:var(--pink);font-size:10px;font-weight:600">~0ms</div>
+      </div>
+
+      <!-- Step 7 -->
+      <div style="display:flex;align-items:center;gap:12px;padding:6px 0;font-size:12px">
+        <div style="width:32px;text-align:center;font-size:16px">7️⃣</div>
+        <div style="width:100px;color:var(--cyan);font-weight:600;font-size:11px">Execute</div>
+        <div style="flex:1;background:var(--bg3);padding:8px 12px;border-radius:6px;border-left:3px solid var(--cyan)">
+          <div style="font-weight:600">Copy Trade Execution</div>
+          <div style="color:var(--muted);font-size:11px">
+            <strong>Dry Run:</strong> Log simulated fill (no real order)<br>
+            <strong>Live:</strong> Check orderbook → size order → EIP-712 sign → POST /order → track fill
+          </div>
+        </div>
+        <div style="width:60px;text-align:right;color:var(--cyan);font-size:10px;font-weight:600">~500ms</div>
+      </div>
+
+      <!-- Step 8 -->
+      <div style="display:flex;align-items:center;gap:12px;padding:6px 0;font-size:12px">
+        <div style="width:32px;text-align:center;font-size:16px">8️⃣</div>
+        <div style="width:100px;color:var(--pink);font-weight:600;font-size:11px">Notify</div>
+        <div style="flex:1;background:var(--bg3);padding:8px 12px;border-radius:6px;border-left:3px solid var(--pink)">
+          <div style="font-weight:600">Telegram Notification</div>
+          <div style="color:var(--muted);font-size:11px">
+            Rate-limited (20 msg/min), batched queue, Markdown formatted.
+            Events: trade detected → AI decision → execution result → risk alerts
+          </div>
+        </div>
+        <div style="width:60px;text-align:right;color:var(--pink);font-size:10px;font-weight:600">async</div>
+      </div>
+
+      <!-- Step 9 -->
+      <div style="display:flex;align-items:center;gap:12px;padding:6px 0;font-size:12px">
+        <div style="width:32px;text-align:center;font-size:16px">9️⃣</div>
+        <div style="width:100px;color:var(--yellow);font-weight:600;font-size:11px">Verify</div>
+        <div style="flex:1;background:var(--bg3);padding:8px 12px;border-radius:6px;border-left:3px solid var(--yellow)">
+          <div style="font-weight:600">On-Chain Settlement Verification</div>
+          <div style="color:var(--muted);font-size:11px">
+            Background: OnChainMonitor watches CTF Exchange contract events.
+            Confirms trade actually settled on Polygon (2-10s after CLOB match).
+          </div>
+        </div>
+        <div style="width:60px;text-align:right;color:var(--yellow);font-size:10px;font-weight:600">2-10s</div>
+      </div>
+    </div>
+  </div>
+
+  <!-- Total timing -->
+  <div style="margin-top:16px;padding:16px;background:var(--bg2);border:1px solid var(--border);border-radius:8px">
+    <div style="font-size:13px;font-weight:600;margin-bottom:12px;color:var(--accent)">⏱️ End-to-End Latency Breakdown</div>
+    <div class="timing-bar">
+      <div class="timing-label">WS Price Event</div>
+      <div class="timing-track"><div class="timing-fill" style="width:3%;background:var(--green)"></div></div>
+      <div class="timing-ms">~50ms</div>
+    </div>
+    <div class="timing-bar">
+      <div class="timing-label">Debounce + Batch</div>
+      <div class="timing-track"><div class="timing-fill" style="width:15%;background:var(--yellow)"></div></div>
+      <div class="timing-ms">~600ms</div>
+    </div>
+    <div class="timing-bar">
+      <div class="timing-label">Data API Poll</div>
+      <div class="timing-track"><div class="timing-fill" style="width:8%;background:var(--blue)"></div></div>
+      <div class="timing-ms">~300ms</div>
+    </div>
+    <div class="timing-bar">
+      <div class="timing-label">AI Filter</div>
+      <div class="timing-track"><div class="timing-fill" style="width:40%;background:var(--accent)"></div></div>
+      <div class="timing-ms">~1.5s</div>
+    </div>
+    <div class="timing-bar">
+      <div class="timing-label">Risk Check</div>
+      <div class="timing-track"><div class="timing-fill" style="width:1%;background:var(--pink)"></div></div>
+      <div class="timing-ms">~1ms</div>
+    </div>
+    <div class="timing-bar">
+      <div class="timing-label">Execution</div>
+      <div class="timing-track"><div class="timing-fill" style="width:13%;background:var(--cyan)"></div></div>
+      <div class="timing-ms">~500ms</div>
+    </div>
+    <div style="margin-top:8px;padding-top:8px;border-top:1px solid var(--border);display:flex;justify-content:space-between;font-size:12px">
+      <span style="color:var(--text);font-weight:600">Total (with AI)</span>
+      <span style="color:var(--accent);font-weight:700">~2.9 seconds</span>
+    </div>
+    <div style="display:flex;justify-content:space-between;font-size:11px;margin-top:4px">
+      <span style="color:var(--muted)">Total (without AI, cached)</span>
+      <span style="color:var(--green);font-weight:600">~1.4 seconds</span>
+    </div>
+  </div>
+</div>
+
+<!-- ═══════════════════════════════════════════════ -->
+<!-- TAB: DECISIONS -->
+<!-- ═══════════════════════════════════════════════ -->
+<div id="tab-decisions" class="tab-content">
+  <div style="display:grid;grid-template-columns:1fr 1fr;gap:16px">
+
+    <!-- Trade Detection Decision -->
+    <div class="decision">
+      <div style="font-weight:600;margin-bottom:8px;color:var(--green)">🔍 Trade Detection</div>
+      <div class="decision-node decision-q">❓ New trade detected from target wallet?</div>
+      <div class="decision-yes">✓ Trade in seenTradeIds?</div>
+      <div class="decision-action" style="border-left-color:var(--yellow)">→ Skip (already processed)</div>
+      <div class="decision-no">✗ New trade</div>
+      <div class="decision-action" style="border-left-color:var(--green)">→ Route to processing pipeline</div>
+    </div>
+
+    <!-- Side Filter -->
+    <div class="decision">
+      <div style="font-weight:600;margin-bottom:8px;color:var(--red)">🚫 Trade Side Filter</div>
+      <div class="decision-node decision-q">❓ Trade side is SELL?</div>
+      <div class="decision-yes">✓ SELL trade — whale is exiting</div>
+      <div class="decision-action" style="border-left-color:var(--accent)">→ Continue to AI filter</div>
+      <div class="decision-no">✗ BUY trade</div>
+      <div class="decision-action" style="border-left-color:var(--red)">→ Skip (log only, don't copy buys)</div>
+    </div>
+
+    <!-- AI Filter Decision -->
+    <div class="decision">
+      <div style="font-weight:600;margin-bottom:8px;color:var(--accent)">🧠 AI Filter</div>
+      <div class="decision-node decision-q">❓ AI_FILTER_ENABLED?</div>
+      <div class="decision-yes">✓ Enabled — run LLM analysis</div>
+      <div class="decision-node decision-q" style="margin-left:24px">❓ Cache hit (within 15min)?</div>
+      <div class="decision-action" style="border-left-color:var(--green)">→ Use cached result</div>
+      <div class="decision-node decision-q" style="margin-left:24px">❓ probability × confidence > minEdge?</div>
+      <div class="decision-action" style="border-left-color:var(--green)">→ ✅ Approve trade</div>
+      <div class="decision-action" style="border-left-color:var(--red)">→ ❌ Reject trade</div>
+      <div class="decision-no">✗ Disabled</div>
+      <div class="decision-action" style="border-left-color:var(--green)">→ Skip AI, go to risk check</div>
+    </div>
+
+    <!-- AI Error Handling -->
+    <div class="decision">
+      <div style="font-weight:600;margin-bottom:8px;color:var(--orange)">⚡ AI Error Handling</div>
+      <div class="decision-node decision-q">❓ LLM call failed?</div>
+      <div class="decision-yes">✓ Error occurred</div>
+      <div class="decision-node decision-q" style="margin-left:24px">❓ FAIL_OPEN = true?</div>
+      <div class="decision-action" style="border-left-color:var(--green)">→ ✅ Approve anyway (fail-open)</div>
+      <div class="decision-action" style="border-left-color:var(--red)">→ ❌ Reject trade (fail-closed)</div>
+      <div class="decision-no">✗ No error</div>
+      <div class="decision-action" style="border-left-color:var(--blue)">→ Continue normal flow</div>
+    </div>
+
+    <!-- Risk Check Decision -->
+    <div class="decision">
+      <div style="font-weight:600;margin-bottom:8px;color:var(--pink)">🛡️ Risk Check</div>
+      <div class="decision-node decision-q">❓ Halted? (drawdown/daily loss/total loss)</div>
+      <div class="decision-yes">✓ Bot is halted</div>
+      <div class="decision-action" style="border-left-color:var(--red)">→ 🛑 Block all trades</div>
+      <div class="decision-no">✗ Not halted</div>
+      <div class="decision-node decision-q" style="margin-left:24px">❓ Session notional + trade > cap?</div>
+      <div class="decision-action" style="border-left-color:var(--red)">→ 🚫 Block (session cap)</div>
+      <div class="decision-node decision-q" style="margin-left:24px">❓ Per-market notional > cap?</div>
+      <div class="decision-action" style="border-left-color:var(--red)">→ 🚫 Block (market cap)</div>
+      <div class="decision-action" style="border-left-color:var(--green)">→ ✅ Allow — calculate position size</div>
+    </div>
+
+    <!-- Execution Decision -->
+    <div class="decision">
+      <div style="font-weight:600;margin-bottom:8px;color:var(--cyan)">🚀 Execution</div>
+      <div class="decision-node decision-q">❓ DRY_RUN = true?</div>
+      <div class="decision-yes">✓ Simulation mode</div>
+      <div class="decision-action" style="border-left-color:var(--yellow)">→ Log simulated fill, update virtual positions</div>
+      <div class="decision-no">✗ Live mode</div>
+      <div class="decision-node decision-q" style="margin-left:24px">❓ Orderbook has liquidity?</div>
+      <div class="decision-action" style="border-left-color:var(--red)">→ Skip (insufficient liquidity)</div>
+      <div class="decision-action" style="border-left-color:var(--cyan)">→ Sign order (EIP-712) → POST /order → track fill</div>
+    </div>
+
+  </div>
+</div>
+
+<!-- ═══════════════════════════════════════════════ -->
+<!-- TAB: TIMING -->
+<!-- ═══════════════════════════════════════════════ -->
+<div id="tab-timing" class="tab-content">
+  <div class="sequence">
+    <div class="seq-title">⏱️ Detection Speed Comparison</div>
+    <div style="display:grid;gap:16px;margin-top:12px">
+
+      <div>
+        <div style="font-size:12px;font-weight:600;color:var(--green);margin-bottom:8px">🟢 FASTEST: CLOB WebSocket → Immediate Poll (~700ms total)</div>
+        <div style="display:flex;gap:4px;height:24px;align-items:center">
+          <div style="width:5%;background:var(--green);height:100%;border-radius:4px 0 0 4px;min-width:20px" title="WS Event"></div>
+          <div style="width:15%;background:var(--yellow);height:100%;min-width:40px" title="Debounce 500ms"></div>
+          <div style="width:8%;background:var(--blue);height:100%;min-width:30px" title="API Poll 300ms"></div>
+          <div style="flex:1;background:var(--bg3);height:100%;border-radius:0 4px 4px 0;display:flex;align-items:center;padding-left:8px;font-size:10px;color:var(--muted)">→ Trade detected</div>
+        </div>
+        <div style="font-size:10px;color:var(--muted);margin-top:4px">WS price event → 500ms debounce → Data API poll → detected</div>
+      </div>
+
+      <div>
+        <div style="font-size:12px;font-weight:600;color:var(--blue);margin-bottom:8px">🔵 NORMAL: REST Polling Interval (~3,000ms worst case)</div>
+        <div style="display:flex;gap:4px;height:24px;align-items:center">
+          <div style="width:70%;background:var(--bg3);height:100%;border-radius:4px 0 0 4px;display:flex;align-items:center;padding-left:8px;font-size:10px;color:var(--muted)">Waiting for next poll...</div>
+          <div style="width:8%;background:var(--blue);height:100%;min-width:30px" title="API Poll"></div>
+          <div style="flex:1;background:var(--bg3);height:100%;border-radius:0 4px 4px 0;display:flex;align-items:center;padding-left:8px;font-size:10px;color:var(--muted)">→ detected</div>
+        </div>
+        <div style="font-size:10px;color:var(--muted);margin-top:4px">3-second interval polling. Worst case: trade happens right after last poll.</div>
+      </div>
+
+      <div>
+        <div style="font-size:12px;font-weight:600;color:var(--yellow);margin-bottom:8px">🟡 SLOWEST: On-Chain Events (~5,000-10,000ms)</div>
+        <div style="display:flex;gap:4px;height:24px;align-items:center">
+          <div style="width:40%;background:var(--muted);height:100%;border-radius:4px 0 0 4px;display:flex;align-items:center;padding-left:8px;font-size:10px;color:var(--bg)">CLOB match pending...</div>
+          <div style="width:30%;background:var(--yellow);height:100%;min-width:60px" title="Block confirmation"></div>
+          <div style="flex:1;background:var(--bg3);height:100%;border-radius:0 4px 4px 0;display:flex;align-items:center;padding-left:8px;font-size:10px;color:var(--muted)">→ settlement confirmed</div>
+        </div>
+        <div style="font-size:10px;color:var(--muted);margin-top:4px">Blockchain events only fire after match + block confirmation. Used for verification, not detection.</div>
+      </div>
+
+    </div>
+  </div>
+
+  <!-- Interval timings -->
+  <div style="margin-top:16px;padding:16px;background:var(--bg2);border:1px solid var(--border);border-radius:8px">
+    <div style="font-size:13px;font-weight:600;margin-bottom:12px;color:var(--accent)">🔄 Periodic Operations</div>
+    <div style="display:grid;grid-template-columns:repeat(auto-fill,minmax(280px,1fr));gap:12px">
+      <div class="config-item">
+        <span class="config-key">REST Polling</span>
+        <span class="config-val">Every 3,000ms (configurable POLL_INTERVAL)</span>
+      </div>
+      <div class="config-item">
+        <span class="config-key">WS Immediate Poll Debounce</span>
+        <span class="config-val">500ms after last WS event</span>
+      </div>
+      <div class="config-item">
+        <span class="config-key">Telegram Queue Flush</span>
+        <span class="config-val">Every 5,000ms or when queue ≥ 5 msgs</span>
+      </div>
+      <div class="config-item">
+        <span class="config-key">Status Report</span>
+        <span class="config-val">Every 600,000ms (10 minutes)</span>
+      </div>
+      <div class="config-item">
+        <span class="config-key">AI Cache TTL</span>
+        <span class="config-val">15 minutes (configurable AI_FILTER_CACHE_MINUTES)</span>
+      </div>
+      <div class="config-item">
+        <span class="config-key">Leaderboard Refresh</span>
+        <span class="config-val">Every 60 minutes (configurable)</span>
+      </div>
+      <div class="config-item">
+        <span class="config-key">On-Chain Reconnect</span>
+        <span class="config-val">10,000ms after disconnect</span>
+      </div>
+      <div class="config-item">
+        <span class="config-key">AI Rate Limit</span>
+        <span class="config-val">Max 10 calls/minute (configurable)</span>
+      </div>
+    </div>
+  </div>
+</div>
+
+<!-- ═══════════════════════════════════════════════ -->
+<!-- TAB: CONFIGURATION -->
+<!-- ═══════════════════════════════════════════════ -->
+<div id="tab-config" class="tab-content">
+  <div style="display:grid;gap:16px">
+
+    <!-- Core Config -->
+    <div style="padding:16px;background:var(--bg2);border:1px solid var(--border);border-radius:8px">
+      <div style="font-size:13px;font-weight:600;margin-bottom:12px;color:var(--accent)">⚙️ Core Configuration (.env)</div>
+      <div class="config-grid">
+        <div class="config-item"><span class="config-key">PRIVATE_KEY</span><span class="config-required">required</span><span class="config-val">EOA wallet private key</span></div>
+        <div class="config-item"><span class="config-key">TARGET_WALLETS</span><span class="config-required">required</span><span class="config-val">Comma-separated addresses</span></div>
+        <div class="config-item"><span class="config-key">RPC_URL</span><span class="config-optional">optional</span><span class="config-val">Polygon RPC (default: polygon-rpc.com)</span></div>
+        <div class="config-item"><span class="config-key">DRY_RUN</span><span class="config-optional">optional</span><span class="config-val">Simulation mode (default: true)</span></div>
+        <div class="config-item"><span class="config-key">USE_WEBSOCKET</span><span class="config-optional">optional</span><span class="config-val">Enable CLOB WS (default: true)</span></div>
+        <div class="config-item"><span class="config-key">POLL_INTERVAL</span><span class="config-optional">optional</span><span class="config-val">REST poll ms (default: 3000)</span></div>
+        <div class="config-item"><span class="config-key">ORDER_TYPE</span><span class="config-optional">optional</span><span class="config-val">FOK / GTC / FAK (default: FOK)</span></div>
+        <div class="config-item"><span class="config-key">LOG_LEVEL</span><span class="config-optional">optional</span><span class="config-val">debug / info / warn / error</span></div>
+      </div>
+    </div>
+
+    <!-- Position & Risk -->
+    <div style="padding:16px;background:var(--bg2);border:1px solid var(--border);border-radius:8px">
+      <div style="font-size:13px;font-weight:600;margin-bottom:12px;color:var(--pink)">🛡️ Position &amp; Risk</div>
+      <div class="config-grid">
+        <div class="config-item"><span class="config-key">POSITION_MULTIPLIER</span><span class="config-optional">optional</span><span class="config-val">Size relative to target (default: 0.1x)</span></div>
+        <div class="config-item"><span class="config-key">MAX_TRADE_SIZE</span><span class="config-optional">optional</span><span class="config-val">Max single trade USDC (default: $100)</span></div>
+        <div class="config-item"><span class="config-key">MIN_TRADE_SIZE</span><span class="config-optional">optional</span><span class="config-val">Min single trade USDC (default: $1)</span></div>
+        <div class="config-item"><span class="config-key">SLIPPAGE_TOLERANCE</span><span class="config-optional">optional</span><span class="config-val">Slippage % (default: 2%)</span></div>
+        <div class="config-item"><span class="config-key">MAX_SESSION_NOTIONAL</span><span class="config-optional">optional</span><span class="config-val">Session cap USDC (default: $1000)</span></div>
+        <div class="config-item"><span class="config-key">MAX_PER_MARKET_NOTIONAL</span><span class="config-optional">optional</span><span class="config-val">Per-market cap (default: $200)</span></div>
+        <div class="config-item"><span class="config-key">DAILY_LOSS_LIMIT</span><span class="config-optional">optional</span><span class="config-val">Daily loss % (default: 5%)</span></div>
+        <div class="config-item"><span class="config-key">MAX_DRAWDOWN</span><span class="config-optional">optional</span><span class="config-val">Max drawdown % (default: 25%)</span></div>
+        <div class="config-item"><span class="config-key">TOTAL_LOSS_LIMIT</span><span class="config-optional">optional</span><span class="config-val">Total loss halt % (default: 40%)</span></div>
+      </div>
+    </div>
+
+    <!-- AI Filter -->
+    <div style="padding:16px;background:var(--bg2);border:1px solid var(--border);border-radius:8px">
+      <div style="font-size:13px;font-weight:600;margin-bottom:12px;color:var(--accent2)">🧠 AI Filter</div>
+      <div class="config-grid">
+        <div class="config-item"><span class="config-key">AI_FILTER_ENABLED</span><span class="config-optional">optional</span><span class="config-val">Enable AI filtering (default: false)</span></div>
+        <div class="config-item"><span class="config-key">AI_FILTER_PROVIDER</span><span class="config-optional">optional</span><span class="config-val">openai / anthropic / openrouter / custom</span></div>
+        <div class="config-item"><span class="config-key">AI_FILTER_API_KEY</span><span class="config-required">required*</span><span class="config-val">LLM provider API key</span></div>
+        <div class="config-item"><span class="config-key">AI_FILTER_MODEL</span><span class="config-optional">optional</span><span class="config-val">Model name (default: gpt-4o)</span></div>
+        <div class="config-item"><span class="config-key">AI_FILTER_SECOND_MODEL</span><span class="config-optional">optional</span><span class="config-val">Second model for ensemble</span></div>
+        <div class="config-item"><span class="config-key">AI_FILTER_MIN_CONFIDENCE</span><span class="config-optional">optional</span><span class="config-val">Min confidence (default: 60%)</span></div>
+        <div class="config-item"><span class="config-key">AI_FILTER_MIN_EDGE</span><span class="config-optional">optional</span><span class="config-val">Min probability edge (default: 5%)</span></div>
+        <div class="config-item"><span class="config-key">AI_FILTER_CACHE_MINUTES</span><span class="config-optional">optional</span><span class="config-val">Cache TTL (default: 15 min)</span></div>
+        <div class="config-item"><span class="config-key">AI_FILTER_FAIL_OPEN</span><span class="config-optional">optional</span><span class="config-val">Approve on error (default: true)</span></div>
+      </div>
+    </div>
+
+    <!-- Integrations -->
+    <div style="padding:16px;background:var(--bg2);border:1px solid var(--border);border-radius:8px">
+      <div style="font-size:13px;font-weight:600;margin-bottom:12px;color:var(--cyan)">🔌 Integrations</div>
+      <div class="config-grid">
+        <div class="config-item"><span class="config-key">PROXY_URL</span><span class="config-optional">optional</span><span class="config-val">SOCKS5/HTTP/HTTPS proxy</span></div>
+        <div class="config-item"><span class="config-key">WS_RPC_URL</span><span class="config-optional">optional</span><span class="config-val">Polygon WS RPC (Alchemy/Infura)</span></div>
+        <div class="config-item"><span class="config-key">TELEGRAM_BOT_TOKEN</span><span class="config-optional">optional</span><span class="config-val">From @BotFather</span></div>
+        <div class="config-item"><span class="config-key">TELEGRAM_CHAT_ID</span><span class="config-optional">optional</span><span class="config-val">From @userinfobot</span></div>
+        <div class="config-item"><span class="config-key">FINFEED_API_KEY</span><span class="config-optional">optional</span><span class="config-val">Paid prediction market data</span></div>
+        <div class="config-item"><span class="config-key">AUTO_DISCOVER_WALLETS</span><span class="config-optional">optional</span><span class="config-val">Auto-find top traders</span></div>
+      </div>
+    </div>
+
+  </div>
+</div>
+
+<!-- ═══════════════════════════════════════════════ -->
+<!-- TAB: RISKS -->
+<!-- ═══════════════════════════════════════════════ -->
+<div id="tab-risks" class="tab-content">
+  <div style="overflow-x:auto">
+    <table class="risk-table">
+      <thead>
+        <tr>
+          <th>Risk</th>
+          <th>Severity</th>
+          <th>Mitigation</th>
+          <th>Module</th>
+          <th>Action</th>
+        </tr>
+      </thead>
+      <tbody>
+        <tr>
+          <td>Excessive losses</td>
+          <td><span class="risk-level risk-critical">Critical</span></td>
+          <td>Daily loss limit (5%), max drawdown (25%), total loss halt (40%)</td>
+          <td>risk.ts</td>
+          <td>Halt all trading</td>
+        </tr>
+        <tr>
+          <td>Oversized positions</td>
+          <td><span class="risk-level risk-high">High</span></td>
+          <td>Position multiplier, min/max trade size, per-market cap ($200)</td>
+          <td>risk.ts</td>
+          <td>Block trade</td>
+        </tr>
+        <tr>
+          <td>Session overexposure</td>
+          <td><span class="risk-level risk-high">High</span></td>
+          <td>Session notional cap ($1,000 default)</td>
+          <td>risk.ts</td>
+          <td>Block trade</td>
+        </tr>
+        <tr>
+          <td>AI filter failure</td>
+          <td><span class="risk-level risk-medium">Medium</span></td>
+          <td>Fail-open (approve on error), fail-closed option, 30s timeout</td>
+          <td>ai-filter.ts</td>
+          <td>Approve or reject based on config</td>
+        </tr>
+        <tr>
+          <td>Bad AI probability</td>
+          <td><span class="risk-level risk-medium">Medium</span></td>
+          <td>Min confidence threshold (60%), min edge (5%), ensemble voting</td>
+          <td>ai-filter.ts</td>
+          <td>Reject low-confidence trades</td>
+        </tr>
+        <tr>
+          <td>API rate limiting</td>
+          <td><span class="risk-level risk-low">Low</span></td>
+          <td>AI: 10 calls/min. Telegram: 20 msg/min. Proxy support.</td>
+          <td>ai-filter.ts, telegram.ts</td>
+          <td>Queue, debounce, cache</td>
+        </tr>
+        <tr>
+          <td>WebSocket disconnect</td>
+          <td><span class="risk-level risk-medium">Medium</span></td>
+          <td>Auto-reconnect (10s), REST polling as backup, polling guard</td>
+          <td>monitor.ts, onchain.ts</td>
+          <td>Reconnect + fallback</td>
+        </tr>
+        <tr>
+          <td>Duplicate trades</td>
+          <td><span class="risk-level risk-low">Low</span></td>
+          <td>seenTradeIds Set for deduplication</td>
+          <td>monitor.ts</td>
+          <td>Skip duplicate</td>
+        </tr>
+        <tr>
+          <td>Concurrent polling</td>
+          <td><span class="risk-level risk-low">Low</span></td>
+          <td>polling guard flag with try/finally</td>
+          <td>monitor.ts</td>
+          <td>Skip concurrent poll</td>
+        </tr>
+        <tr>
+          <td>Telegram parse errors</td>
+          <td><span class="risk-level risk-low">Low</span></td>
+          <td>escapeMarkdown() for legacy mode, plain text fallback</td>
+          <td>telegram.ts</td>
+          <td>Retry as plain text</td>
+        </tr>
+        <tr>
+          <td>Network timeout</td>
+          <td><span class="risk-level risk-medium">Medium</span></td>
+          <td>AbortSignal.timeout() on all fetch calls (8-30s)</td>
+          <td>all modules</td>
+          <td>Abort + log + continue</td>
+        </tr>
+        <tr>
+          <td>Stale market data</td>
+          <td><span class="risk-level risk-low">Low</span></td>
+          <td>AI cache TTL (15min), real-time orderbook check before execution</td>
+          <td>ai-filter.ts, executor.ts</td>
+          <td>Refresh or skip</td>
+        </tr>
+        <tr>
+          <td>Insufficient liquidity</td>
+          <td><span class="risk-level risk-medium">Medium</span></td>
+          <td>Orderbook check before sizing, slippage tolerance (2%)</td>
+          <td>executor.ts</td>
+          <td>Skip trade</td>
+        </tr>
+        <tr>
+          <td>Cross-platform data skew</td>
+          <td><span class="risk-level risk-low">Low</span></td>
+          <td>FinFeedAPI only queries Polymarket (Kalshi native). Spread detection.</td>
+          <td>cross-platform.ts</td>
+          <td>Log high-spread warning</td>
+        </tr>
+      </tbody>
+    </table>
+  </div>
+</div>
+
+</div><!-- end container -->
+
+<script>
+  function togglePhase(id) {
+    document.getElementById(id).classList.toggle('collapsed');
+  }
+
+  function switchTab(name) {
+    document.querySelectorAll('.tab').forEach(t => t.classList.remove('active'));
+    document.querySelectorAll('.tab-content').forEach(t => t.classList.remove('active'));
+    event.target.classList.add('active');
+    document.getElementById('tab-' + name).classList.add('active');
+  }
+
+  // Animate timing bars on scroll
+  const observer = new IntersectionObserver((entries) => {
+    entries.forEach(entry => {
+      if (entry.isIntersecting) {
+        entry.target.querySelectorAll('.timing-fill').forEach(fill => {
+          fill.style.width = fill.style.width;
+        });
+      }
+    });
+  });
+
+  document.querySelectorAll('.timing-bar').forEach(el => observer.observe(el));
+</script>
+</body>
+</html>

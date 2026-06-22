@@ -6,6 +6,7 @@
 
 import { BotConfig, ParsedTrade, CopyTradeResult, PaperTradingConfig } from './types';
 import { log } from './logger';
+import { calculateCopySize, calculateSimulatedFillPrice } from './sizing';
 
 export class PaperExecutor {
   private config: BotConfig;
@@ -18,12 +19,10 @@ export class PaperExecutor {
 
   /**
    * Calculate the copy trade size based on target's position and our multiplier.
-   * (Same logic as the real executor)
+   * Delegates to shared helper in sizing.ts.
    */
   calculateCopySize(targetSize: number): number {
-    const raw = targetSize * this.config.positionMultiplier;
-    const clamped = Math.min(Math.max(raw, this.config.minTradeSize), this.config.maxTradeSize);
-    return Math.round(clamped * 100) / 100;
+    return calculateCopySize(this.config, targetSize);
   }
 
   /**
@@ -62,26 +61,6 @@ export class PaperExecutor {
    * Calculate simulated fill price based on fill mode and slippage.
    */
   private calculateSimulatedFillPrice(trade: ParsedTrade): number {
-    let basePrice: number;
-
-    if (this.paperConfig.fillMode === 'market_price') {
-      // Fill at the market price the target traded at
-      basePrice = trade.price;
-    } else {
-      // Fill at target's price (default)
-      basePrice = trade.price;
-    }
-
-    // Apply simulated slippage
-    const slippageBps = this.paperConfig.simulatedSlippageBps;
-    const slippageMultiplier = slippageBps / 10_000;
-
-    const adjusted = trade.side === 'BUY'
-      ? basePrice * (1 + slippageMultiplier)  // Pay more when buying
-      : basePrice * (1 - slippageMultiplier); // Receive less when selling
-
-    // Clamp to valid range
-    const clamped = Math.min(Math.max(adjusted, 0.01), 0.99);
-    return Math.round(clamped * 100) / 100;
+    return calculateSimulatedFillPrice(this.paperConfig.simulatedSlippageBps, trade.price, trade.side);
   }
 }

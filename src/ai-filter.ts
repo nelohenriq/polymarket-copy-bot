@@ -16,6 +16,8 @@ import { AIFilterConfig, AIFilterResult, AIProbabilityEstimate, ParsedTrade } fr
 import { log } from './logger';
 import { proxyFetch } from './proxy';
 import { fetchConsensus, formatConsensusForPrompt, type ConsensusResult } from './cross-platform';
+import { getMarketData, formatMarketDataForPrompt, isBullpenAvailable } from './bullpen';
+import { formatIntelligenceForPrompt, type MarketIntelligence } from './intelligence';
 
 const GAMMA_API = 'https://gamma-api.polymarket.com';
 
@@ -336,7 +338,13 @@ async function fetchMarketContext(tokenId: string): Promise<MarketContext | null
 // Prompt Builder
 // ──────────────────────────────────────────────
 
-function buildAnalysisPrompt(trade: ParsedTrade, context: MarketContext | null, consensus?: ConsensusResult): string {
+function buildAnalysisPrompt(
+  trade: ParsedTrade,
+  context: MarketContext | null,
+  consensus?: ConsensusResult,
+  bullpen?: import('./bullpen').BullpenMarketData | null,
+  intelligenceEvents?: import('./types').MarketEvent[],
+): string {
   const parts = [
     '## Market Question',
     context ? context.question : trade.outcome || trade.title,
@@ -371,6 +379,18 @@ function buildAnalysisPrompt(trade: ParsedTrade, context: MarketContext | null, 
   // Include cross-platform consensus if available
   if (consensus && consensus.sourceCount > 0) {
     parts.push(formatConsensusForPrompt(consensus));
+  }
+
+  // Include Bullpen market data if available (orderbook depth, spreads)
+  if (bullpen) {
+    const bullpenPrompt = formatMarketDataForPrompt(bullpen);
+    if (bullpenPrompt) parts.push(bullpenPrompt);
+  }
+
+  // Include recent intelligence events if available (news sentiment, alerts)
+  if (intelligenceEvents && intelligenceEvents.length > 0) {
+    const intelPrompt = formatIntelligenceForPrompt(intelligenceEvents);
+    if (intelPrompt) parts.push(intelPrompt);
   }
 
   parts.push(
@@ -440,10 +460,19 @@ export class AITradeFilter {
   private cache: AnalysisCache;
   private rateLimiter: RateLimiter;
 
+  private intelligence: MarketIntelligence | null = null;
+
   constructor(config: AIFilterConfig) {
     this.config = config;
     this.cache = new AnalysisCache(config.cacheMinutes);
     this.rateLimiter = new RateLimiter(config.maxCallsPerMinute);
+  }
+
+  /**
+   * Attach the market intelligence engine for enriching prompts with recent events.
+   */
+  setIntelligence(intel: MarketIntelligence): void {
+    this.intelligence = intel;
   }
 
   /**
@@ -468,10 +497,11 @@ export class AITradeFilter {
     }
 
     try {
-      // Fetch market context and cross-platform consensus in parallel for speed
-      const [context, consensusFromTitle] = await Promise.all([
+      // Fetch market context, cross-platform consensus, and Bullpen data in parallel
+      const [context, consensusFromTitle, bullpenData] = await Promise.all([
         fetchMarketContext(trade.tokenId),
         fetchConsensus(trade.outcome || trade.title),
+        isBullpenAvailable() ? getMarketData(trade.market || trade.outcome) : Promise.resolve(null),
       ]);
       if (context) {
         log.debug(`Market context: ${context.question.slice(0, 50)}...`);
@@ -483,7 +513,8 @@ export class AITradeFilter {
         : consensusFromTitle;
 
       // Build the analysis prompt (now includes cross-platform data)
-      const prompt = buildAnalysisPrompt(trade, context, consensus);
+      const recentEvents = this.intelligence?.getEvents().slice(-20) || [];
+      const prompt = buildAnalysisPrompt(trade, context, consensus, bullpenData, recentEvents);
 
       // Call LLM(s) for probability estimates
       const estimates: AIProbabilityEstimate[] = [];

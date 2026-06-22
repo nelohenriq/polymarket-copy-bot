@@ -51,6 +51,8 @@ export interface BotConfig {
   telegramChatId?: string;
   /** FinFeedAPI key for cross-platform market data (paid) */
   finfeedApiKey?: string;
+  /** Enable Bullpen.fi integration for smart money, market data, and fallback execution */
+  bullpenEnabled?: boolean;
 }
 
 export type CopyOrderType = 'FOK' | 'GTC' | 'FAK';
