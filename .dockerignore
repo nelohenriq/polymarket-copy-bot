@@ -1,0 +1,14 @@
+node_modules
+dist
+.git
+.github
+*.md
+!README.md
+.env
+.env.*
+!.env.example
+test-*.ts
+net-diag.ts
+dns-test.ts
+*.log
+.DS_Store

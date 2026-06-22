@@ -1,0 +1,26 @@
+{
+  "name": "polymarket-copy-bot",
+  "version": "1.0.0",
+  "description": "Polymarket Copy-Trading Bot — monitors top traders and mirrors their trades",
+  "main": "dist/index.js",
+  "scripts": {
+    "build": "tsc",
+    "start": "node dist/index.js",
+    "dev": "tsx src/index.ts",
+    "typecheck": "tsc --noEmit"
+  },
+  "dependencies": {
+    "@polymarket/clob-client": "^4.0.0",
+    "axios": "^1.7.9",
+    "dotenv": "^16.4.7",
+    "ethers": "^5.7.2",
+    "undici": "^8.5.0",
+    "ws": "^8.18.0"
+  },
+  "devDependencies": {
+    "@types/node": "^22.10.0",
+    "@types/ws": "^8.5.13",
+    "tsx": "^4.19.0",
+    "typescript": "^5.7.0"
+  }
+}
