@@ -15,6 +15,7 @@
 import { AIFilterConfig, AIFilterResult, AIProbabilityEstimate, ParsedTrade } from './types';
 import { log } from './logger';
 import { proxyFetch } from './proxy';
+import { fetchConsensus, formatConsensusForPrompt, type ConsensusResult } from './cross-platform';
 
 const GAMMA_API = 'https://gamma-api.polymarket.com';
 
@@ -335,7 +336,7 @@ async function fetchMarketContext(tokenId: string): Promise<MarketContext | null
 // Prompt Builder
 // ──────────────────────────────────────────────
 
-function buildAnalysisPrompt(trade: ParsedTrade, context: MarketContext | null): string {
+function buildAnalysisPrompt(trade: ParsedTrade, context: MarketContext | null, consensus?: ConsensusResult): string {
   const parts = [
     '## Market Question',
     context ? context.question : trade.outcome || trade.title,
@@ -365,6 +366,14 @@ function buildAnalysisPrompt(trade: ParsedTrade, context: MarketContext | null):
     `- Size: $${trade.size.toFixed(2)}`,
     `- Outcome: ${trade.outcome}`,
     '',
+  );
+
+  // Include cross-platform consensus if available
+  if (consensus && consensus.sourceCount > 0) {
+    parts.push(formatConsensusForPrompt(consensus));
+  }
+
+  parts.push(
     '## Your Task',
     'Estimate the TRUE probability that this event will occur. Consider:',
     '1. Current news and events affecting this outcome',
@@ -459,14 +468,22 @@ export class AITradeFilter {
     }
 
     try {
-      // Fetch market context from Gamma API
-      const context = await fetchMarketContext(trade.tokenId);
+      // Fetch market context and cross-platform consensus in parallel for speed
+      const [context, consensusFromTitle] = await Promise.all([
+        fetchMarketContext(trade.tokenId),
+        fetchConsensus(trade.outcome || trade.title),
+      ]);
       if (context) {
         log.debug(`Market context: ${context.question.slice(0, 50)}...`);
       }
 
-      // Build the analysis prompt
-      const prompt = buildAnalysisPrompt(trade, context);
+      // Re-fetch consensus with the full question if we got context (better matching)
+      const consensus = context && context.question !== (trade.outcome || trade.title)
+        ? await fetchConsensus(context.question)
+        : consensusFromTitle;
+
+      // Build the analysis prompt (now includes cross-platform data)
+      const prompt = buildAnalysisPrompt(trade, context, consensus);
 
       // Call LLM(s) for probability estimates
       const estimates: AIProbabilityEstimate[] = [];

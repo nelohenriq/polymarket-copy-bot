@@ -22,7 +22,13 @@ export class TradeMonitor {
   private pollTimer: ReturnType<typeof setInterval> | null = null;
   private ws: WebSocket | null = null;
   private wsReconnectTimer: ReturnType<typeof setTimeout> | null = null;
+  private wsImmediatePollTimer: ReturnType<typeof setTimeout> | null = null;
+  private lastWsTriggerTime = 0;
+  private polling = false;
   private running = false;
+
+  /** Minimum interval between WS-triggered polls (debounce) */
+  private readonly WS_POLL_DEBOUNCE_MS = 500;
 
   constructor(config: BotConfig, onTrade: OnTradeCallback) {
     this.config = config;
@@ -64,6 +70,11 @@ export class TradeMonitor {
       this.wsReconnectTimer = null;
     }
 
+    if (this.wsImmediatePollTimer) {
+      clearTimeout(this.wsImmediatePollTimer);
+      this.wsImmediatePollTimer = null;
+    }
+
     if (this.ws) {
       this.ws.close();
       this.ws = null;
@@ -89,6 +100,9 @@ export class TradeMonitor {
   }
 
   private async pollAllWallets(): Promise<void> {
+    if (this.polling) return;
+    this.polling = true;
+    try {
     for (const wallet of this.config.targetWallets) {
       try {
         await this.pollWallet(wallet);
@@ -96,6 +110,9 @@ export class TradeMonitor {
         const msg = error instanceof Error ? error.message : String(error);
         log.error(`Error polling wallet ${wallet.slice(0, 8)}...: ${msg}`);
       }
+    }
+    } finally {
+      this.polling = false;
     }
   }
 
@@ -227,13 +244,38 @@ export class TradeMonitor {
   }
 
   private handleWsMessage(msg: Record<string, unknown>): void {
-    // WebSocket trade events supplement REST polling
-    // They're faster but less reliable for initial discovery
     if (msg.event_type === 'last_trade_price') {
       const assetId = msg.asset_id as string;
       const price = msg.price as string;
       log.debug(`WS price update: ${assetId?.slice(0, 12)}... → ${price}`);
+
+      // Trigger immediate poll (debounced) — a price movement means a trade just happened
+      this.triggerImmediatePoll();
     }
+  }
+
+  /**
+   * Trigger an immediate poll of all wallets, debounced to avoid flooding.
+   * When the WebSocket detects a price movement, a trade just happened —
+   * we poll immediately instead of waiting for the next interval.
+   */
+  private triggerImmediatePoll(): void {
+    const now = Date.now();
+    if (now - this.lastWsTriggerTime < this.WS_POLL_DEBOUNCE_MS) {
+      return; // Debounce: too soon since last trigger
+    }
+    this.lastWsTriggerTime = now;
+
+    // Cancel any pending immediate poll
+    if (this.wsImmediatePollTimer) {
+      clearTimeout(this.wsImmediatePollTimer);
+    }
+
+    // Schedule immediate poll with small delay to batch rapid-fire events
+    this.wsImmediatePollTimer = setTimeout(() => {
+      log.debug('WS-triggered immediate poll');
+      this.pollAllWallets();
+    }, 100); // 100ms delay to batch rapid-fire WS events
   }
 
   private scheduleReconnect(): void {

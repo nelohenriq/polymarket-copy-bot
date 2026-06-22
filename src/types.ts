@@ -43,6 +43,14 @@ export interface BotConfig {
   dryRun: boolean;
   /** Proxy URL for routing API traffic (SOCKS5, HTTP, HTTPS) */
   proxyUrl?: string;
+  /** WebSocket RPC URL for on-chain settlement monitoring (e.g. Alchemy wss://...) */
+  wsRpcUrl?: string;
+  /** Telegram bot token for notifications */
+  telegramBotToken?: string;
+  /** Telegram chat ID to send notifications to */
+  telegramChatId?: string;
+  /** FinFeedAPI key for cross-platform market data (paid) */
+  finfeedApiKey?: string;
 }
 
 export type CopyOrderType = 'FOK' | 'GTC' | 'FAK';

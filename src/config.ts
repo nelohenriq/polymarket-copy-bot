@@ -81,6 +81,10 @@ export function loadConfig(): BotConfig {
     logLevel,
     dryRun: parseBoolEnv('DRY_RUN', true),
     proxyUrl: process.env['PROXY_URL'] || undefined,
+    wsRpcUrl: process.env['WS_RPC_URL'] || undefined,
+    telegramBotToken: process.env['TELEGRAM_BOT_TOKEN'] || undefined,
+    telegramChatId: process.env['TELEGRAM_CHAT_ID'] || undefined,
+    finfeedApiKey: process.env['FINFEED_API_KEY'] || undefined,
   };
 
   return config;
@@ -199,5 +203,8 @@ export function printConfig(config: BotConfig): void {
   console.log(`   Poll interval: ${config.pollInterval}ms`);
   console.log(`   Mode: ${config.dryRun ? '🟢 DRY RUN (simulation)' : '🔴 LIVE TRADING'}`);
   if (config.proxyUrl) console.log(`   Proxy: ${config.proxyUrl}`);
+  if (config.wsRpcUrl) console.log(`   On-chain:         enabled (WS RPC)`);
+  if (config.telegramBotToken && config.telegramChatId) console.log(`   Telegram:         enabled`);
+  if (config.finfeedApiKey) console.log(`   FinFeedAPI:       enabled`);
   console.log('');
 }

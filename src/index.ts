@@ -19,6 +19,7 @@
 
 import { loadConfig, loadAIConfig, loadLeaderboardConfig, printConfig, printAIConfig, printLeaderboardConfig } from './config';
 import { configureProxy } from './proxy';
+import { configureFinFeed } from './cross-platform';
 import { initClient, ensureAllowances } from './client';
 import { TradeMonitor } from './monitor';
 import { RiskManager } from './risk';
@@ -26,6 +27,8 @@ import { TradeExecutor } from './executor';
 import { PositionTracker } from './positions';
 import { AITradeFilter } from './ai-filter';
 import { LeaderboardScraper } from './leaderboard';
+import { OnChainMonitor } from './onchain';
+import { TelegramNotifier } from './telegram';
 import { log, setLogLevel } from './logger';
 import { ParsedTrade, SessionStats, BotConfig } from './types';
 
@@ -67,8 +70,9 @@ async function main(): Promise<void> {
   printAIConfig(aiConfig);
   printLeaderboardConfig(leaderboardConfig);
 
-  // ── Step 1a: Configure proxy (if set) ──
+  // ── Step 1a: Configure proxy and external APIs ──
   configureProxy(config.proxyUrl);
+  configureFinFeed(config.finfeedApiKey);
 
   // ── Step 1b: Auto-discover wallets if enabled ──
   if (leaderboardConfig) {
@@ -104,6 +108,19 @@ async function main(): Promise<void> {
   const executor = new TradeExecutor(config, clob);
   const aiFilter = aiConfig ? new AITradeFilter(aiConfig) : null;
 
+  // Initialize Telegram notifier (if configured)
+  let telegram: TelegramNotifier | null = null;
+  const tgToken = config.telegramBotToken;
+  const tgChatId = config.telegramChatId;
+  if (tgToken && tgChatId) {
+    telegram = new TelegramNotifier({
+      botToken: tgToken,
+      chatId: tgChatId,
+      enabledEvents: { trade: true, ai: true, risk: true, execution: true, error: true, status: true },
+    });
+    await telegram.connect();
+  }
+
   // ── Step 5: Handle incoming trades ──
   async function handleNewTrade(trade: ParsedTrade): Promise<void> {
     stats.tradesDetected++;
@@ -115,6 +132,9 @@ async function main(): Promise<void> {
       return;
     }
 
+    // Notify: trade detected
+    telegram?.notifyTrade({ side: trade.side, size: trade.size, price: trade.price, outcome: trade.outcome, user: trade.user });
+
     // Calculate copy size
     const copyNotional = executor.calculateCopySize(trade.size);
 
@@ -122,6 +142,7 @@ async function main(): Promise<void> {
     const riskCheck = riskManager.checkTrade(trade, copyNotional);
     if (!riskCheck.allowed) {
       log.risk(`Trade blocked: ${riskCheck.reason}`);
+      telegram?.notifyRisk({ type: 'blocked', message: riskCheck.reason ?? 'Unknown', trade: trade.outcome });
       stats.tradesSkipped++;
       return;
     }
@@ -138,6 +159,7 @@ async function main(): Promise<void> {
         const aiResult = await aiFilter.evaluate(trade);
         if (!aiResult.approved) {
           stats.tradesAiRejected++;
+          telegram?.notifyAI({ approved: false, probability: aiResult.ensembleProbability, marketPrice: aiResult.marketPrice, edge: aiResult.edge, confidence: aiResult.confidence, outcome: trade.outcome, latencyMs: aiResult.latencyMs });
           log.info(
             `🤖 AI rejected: prob=${(aiResult.ensembleProbability * 100).toFixed(1)}% ` +
             `market=${(aiResult.marketPrice * 100).toFixed(1)}% ` +
@@ -145,6 +167,7 @@ async function main(): Promise<void> {
           );
           return;
         }
+        telegram?.notifyAI({ approved: true, probability: aiResult.ensembleProbability, marketPrice: aiResult.marketPrice, edge: aiResult.edge, confidence: aiResult.confidence, outcome: trade.outcome, latencyMs: aiResult.latencyMs });
         log.success(
           `🤖 AI approved: prob=${(aiResult.ensembleProbability * 100).toFixed(1)}% ` +
           `market=${(aiResult.marketPrice * 100).toFixed(1)}% ` +
@@ -153,8 +176,10 @@ async function main(): Promise<void> {
       } catch (error) {
         const msg = error instanceof Error ? error.message : String(error);
         log.error(`AI filter error: ${msg}`);
+        telegram?.notifyError('AI Filter Error', msg);
         if (!aiConfig?.failOpen) {
           stats.tradesAiRejected++;
+          telegram?.notifyRisk({ type: 'blocked', message: 'AI filter failed in fail-closed mode — rejecting trade', trade: trade.outcome });
           log.error('AI filter failed in fail-closed mode — rejecting trade');
           return;
         }
@@ -188,20 +213,35 @@ async function main(): Promise<void> {
             side: result.side,
           });
 
+          telegram?.notifyExecution({ side: result.side, shares: result.copyShares, price: result.price, notional: result.copyNotional, orderId: result.orderId ?? '', outcome: trade.outcome });
           log.success(
             `Copy trade executed: ${result.side} ${result.copyShares.toFixed(4)} shares ` +
             `@ $${result.price.toFixed(4)} | OrderID: ${result.orderId}`,
           );
         } else {
           stats.tradesFailed++;
+          telegram?.notifyError('Trade Failed', `Copy trade failed: ${result.error}`);
           log.error(`Copy trade failed: ${result.error}`);
         }
       })
       .catch((error) => {
         stats.tradesFailed++;
         const msg = error instanceof Error ? error.message : String(error);
+        telegram?.notifyError('Trade Error', msg);
         log.error(`Copy trade error: ${msg}`);
       });
+  }
+
+  // ── Step 5b: Start on-chain settlement monitor (if WS_RPC_URL configured) ──
+  let onchainMonitor: OnChainMonitor | null = null;
+  if (config.wsRpcUrl) {
+    onchainMonitor = new OnChainMonitor(config.targetWallets, (fill) => {
+      log.debug(`On-chain settlement confirmed: ${fill.side} token=${fill.tokenId.slice(0, 12)}... amount=${fill.makerAmount} USDC`);
+    });
+    onchainMonitor.start(config.wsRpcUrl).catch((err) => {
+      const msg = err instanceof Error ? err.message : String(err);
+      log.warn(`On-chain monitor failed to start: ${msg} (continuing without it)`);
+    });
   }
 
   // ── Step 6: Start trade monitor ──
@@ -216,19 +256,30 @@ async function main(): Promise<void> {
   // ── Step 7: Periodic status reports ──
   const statusInterval = setInterval(() => {
     printStatusReport();
-  }, 60_000); // Every minute
+    telegram?.notifyStatus({
+      uptime: Math.floor((Date.now() - stats.startTime) / 1000),
+      detected: stats.tradesDetected,
+      copied: stats.tradesCopied,
+      skipped: stats.tradesSkipped,
+      aiRejected: stats.tradesAiRejected,
+      failed: stats.tradesFailed,
+      volume: stats.totalVolume,
+    });
+  }, 600_000); // Every 10 minutes (avoids flooding Telegram)
 
   // ── Step 8: Graceful shutdown ──
-  function shutdown(signal: string): void {
+  async function shutdown(signal: string): Promise<void> {
     log.info(`\n${signal} received. Shutting down...`);
     monitor.stop();
+    if (onchainMonitor) onchainMonitor.stop();
     clearInterval(statusInterval);
     printFinalReport();
+    if (telegram) await telegram.disconnect();
     process.exit(0);
   }
 
-  process.on('SIGINT', () => shutdown('SIGINT'));
-  process.on('SIGTERM', () => shutdown('SIGTERM'));
+  process.on('SIGINT', () => { shutdown('SIGINT').catch(() => process.exit(1)); });
+  process.on('SIGTERM', () => { shutdown('SIGTERM').catch(() => process.exit(1)); });
 
   // Keep process alive — SIGINT/SIGTERM handlers above will call
   // process.exit() to trigger a clean shutdown.
