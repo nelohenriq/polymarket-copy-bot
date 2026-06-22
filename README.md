@@ -47,7 +47,7 @@ Automated copy-trading bot for [Polymarket](https://polymarket.com) — monitors
 ### Installation
 
 ```bash
-git clone https://github.com/YOUR_USERNAME/polymarket-copy-bot.git
+git clone https://github.com/nelohenriq/polymarket-copy-bot.git
 cd polymarket-copy-bot
 npm install
 cp .env.example .env
