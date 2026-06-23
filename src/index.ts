@@ -51,6 +51,8 @@ import { ParsedTrade, SessionStats, BotConfig, PaperTradingConfig } from './type
 import { calculateCopySize, calculateSimulatedFillPrice } from './sizing';
 import * as fs from 'fs';
 import * as dns from 'dns';
+import * as http from 'http';
+import * as path from 'path';
 
 // ──────────────────────────────────────────────
 // Session Statistics
@@ -445,6 +447,46 @@ async function main(): Promise<void> {
   }
   log.info('Press Ctrl+C to stop\n');
 
+  // ── Step 6b: Start dashboard HTTP server (dry-run mode) ──
+  let dashboardServer: http.Server | null = null;
+  if (config.dryRun && !paperMode) {
+    const DASHBOARD_PORT = 3456;
+    dashboardServer = http.createServer((req, res) => {
+      if (req.url === '/dry-run-trades.json') {
+        res.writeHead(200, { 'Content-Type': 'application/json', 'Access-Control-Allow-Origin': '*' });
+        try {
+          const data = fs.readFileSync(dashboardPath, 'utf-8');
+          res.end(data);
+        } catch {
+          res.end(JSON.stringify({ lastUpdated: null, stats: { ...stats }, entries: [], openPositions: [] }));
+        }
+      } else if (req.url === '/' || req.url === '/dashboard.html') {
+        try {
+          const html = fs.readFileSync(path.join(process.cwd(), 'dashboard.html'), 'utf-8');
+          res.writeHead(200, { 'Content-Type': 'text/html' });
+          res.end(html);
+        } catch {
+          res.writeHead(404, { 'Content-Type': 'text/plain' });
+          res.end('dashboard.html not found in project root');
+        }
+      } else if (req.url === '/favicon.ico') {
+        res.writeHead(204);
+        res.end();
+      } else {
+        res.writeHead(404, { 'Content-Type': 'text/plain' });
+        res.end('Not found');
+      }
+    });
+    dashboardServer.listen(DASHBOARD_PORT, () => {
+      log.success(`📊 Dashboard: http://localhost:${DASHBOARD_PORT}`);
+    });
+    dashboardServer.on('error', (err: NodeJS.ErrnoException) => {
+      if (err.code === 'EADDRINUSE') {
+        log.warn(`Dashboard port ${DASHBOARD_PORT} in use — dashboard unavailable`);
+      }
+    });
+  }
+
   // ── Step 7: Periodic status reports ──
   const statusInterval = setInterval(() => {
     printStatusReport();
@@ -463,6 +505,7 @@ async function main(): Promise<void> {
   async function shutdown(signal: string): Promise<void> {
     log.info(`\n${signal} received. Shutting down...`);
     monitor.stop();
+    if (dashboardServer) dashboardServer.close();
     if (onchainMonitor) onchainMonitor.stop();
     if (intelligence) intelligence.stop();
     clearInterval(statusInterval);
