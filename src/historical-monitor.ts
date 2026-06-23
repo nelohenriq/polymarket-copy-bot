@@ -6,6 +6,7 @@
 
 import { BotConfig, ParsedTrade, DataApiTrade, BacktestConfig } from './types';
 import { log } from './logger';
+import { proxyFetch } from './proxy';
 
 const DATA_API_BASE = 'https://data-api.polymarket.com';
 
@@ -104,7 +105,7 @@ export class HistoricalMonitor {
       }
 
       const url = `${DATA_API_BASE}/activity?${params.toString()}`;
-      const response = await fetch(url, {
+      const response = await proxyFetch(url, {
         headers: { Accept: 'application/json' },
         signal: AbortSignal.timeout(30_000),
       });
@@ -142,24 +143,26 @@ export class HistoricalMonitor {
 
   private parseTrade(raw: DataApiTrade): ParsedTrade | null {
     try {
-      const size = parseFloat(raw.size);
-      const price = parseFloat(raw.price);
+      const size = typeof raw.size === 'number' ? raw.size : parseFloat(String(raw.size));
+      const price = typeof raw.price === 'number' ? raw.price : parseFloat(String(raw.price));
 
       if (isNaN(size) || isNaN(price) || size <= 0 || price <= 0) {
         return null;
       }
 
+      const tradeId = `${raw.conditionId}-${raw.proxyWallet}-${raw.timestamp}-${(raw.transactionHash as string) || ''}`;
+
       return {
-        id: raw.id,
-        timestamp: new Date(raw.timestamp).getTime(),
-        market: raw.market,
-        tokenId: raw.asset_id,
+        id: tradeId,
+        timestamp: typeof raw.timestamp === 'number' ? raw.timestamp * 1000 : new Date(raw.timestamp).getTime(),
+        market: raw.conditionId,
+        tokenId: raw.asset as string,
         side: raw.side,
         size,
         price,
-        user: raw.user.toLowerCase(),
-        outcome: raw.outcome || raw.title || 'Unknown',
-        title: raw.title || '',
+        user: (raw.proxyWallet as string || '').toLowerCase(),
+        outcome: (raw.outcome as string) || (raw.title as string) || 'Unknown',
+        title: (raw.title as string) || '',
       };
     } catch {
       return null;

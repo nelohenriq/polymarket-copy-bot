@@ -64,20 +64,36 @@ export type LogLevel = 'debug' | 'info' | 'warn' | 'error';
 
 /** Raw trade from Polymarket Data API /activity endpoint */
 export interface DataApiTrade {
-  id: string;
-  timestamp: string;
-  market: string;
-  asset_id: string;
+  /** Wallet address of the trader */
+  proxyWallet: string;
+  /** Unix timestamp (seconds) */
+  timestamp: number;
+  /** Market condition ID */
+  conditionId: string;
+  /** Trade type */
+  type: string;
+  /** Trade size in shares */
+  size: number;
+  /** Trade size in USDC */
+  usdcSize?: number;
+  /** Transaction hash on Polygon */
+  transactionHash?: string;
+  /** Fill price */
+  price: number;
+  /** Token asset ID */
+  asset: string;
+  /** Buy or sell */
   side: 'BUY' | 'SELL';
-  size: string;
-  price: string;
-  user: string;
-  outcome: string;
+  /** Outcome index (0 or 1) */
+  outcomeIndex?: number;
+  /** Market title/question */
   title: string;
-  slug: string;
-  /** Additional fields from the API */
-  condition_id?: string;
-  transaction_hash?: string;
+  /** Market slug */
+  slug?: string;
+  /** Outcome name (e.g. "Yes", "No") */
+  outcome: string;
+  /** Additional fields */
+  [key: string]: unknown;
 }
 
 /** Parsed trade ready for copy execution */

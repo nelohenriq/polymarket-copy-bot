@@ -29,7 +29,7 @@ import {
   printPaperConfig, printBacktestConfig,
   isIntelligenceEnabled, loadIntelligenceConfig, printIntelligenceConfig,
 } from './config';
-import { configureProxy, proxyFetch } from './proxy';
+import { configureProxy, proxyFetch, runProxyDiagnostics } from './proxy';
 import { configureFinFeed } from './cross-platform';
 import { isBullpenAvailable, isBullpenAuthenticated, executeTradeViaBullpen } from './bullpen';
 import { initClient, ensureAllowances } from './client';
@@ -50,6 +50,7 @@ import { log, setLogLevel } from './logger';
 import { ParsedTrade, SessionStats, BotConfig, PaperTradingConfig } from './types';
 import { calculateCopySize, calculateSimulatedFillPrice } from './sizing';
 import * as fs from 'fs';
+import * as dns from 'dns';
 
 // ──────────────────────────────────────────────
 // Session Statistics
@@ -71,10 +72,32 @@ const stats: SessionStats = {
 // ──────────────────────────────────────────────
 
 async function main(): Promise<void> {
+  // DNS validation: check if c-ares resolution (used by the bot) can reach Polymarket.
+  // The proxy module sets dns.setServers(['8.8.8.8', '1.1.1.1']) which affects dns.resolve
+  // but NOT dns.lookup (which uses OS getaddrinfo). We test with dns.resolve here.
+  try {
+    const resolved = await new Promise<string[]>((resolve, reject) => {
+      dns.resolve4('data-api.polymarket.com', (err, addresses) => {
+        if (err) reject(err);
+        else resolve(addresses);
+      });
+    });
+    const isCloudflare = resolved.some(ip => ip.startsWith('172.64.') || ip.startsWith('104.18.') || ip.startsWith('104.16.'));
+    if (isCloudflare) {
+      console.log(`   ✅ DNS OK (c-ares): data-api.polymarket.com → ${resolved[0]}`);
+    } else {
+      console.warn(`\n⚠️  DNS WARNING: data-api.polymarket.com → ${resolved.join(', ')}`);
+    }
+  } catch (dnsErr) {
+    const dnsMsg = dnsErr instanceof Error ? dnsErr.message : String(dnsErr);
+    console.warn(`⚠️  DNS resolution failed: ${dnsMsg} — check your network connectivity`);
+  }
+
   // Detect mode early for banner
   const paperMode = isPaperTrading();
   const backtestMode = isBacktest();
-  const modeLabel = backtestMode ? '📊 BACKTEST' : paperMode ? '📝 PAPER TRADING' : '🤖 LIVE';
+  const dryRunEarly = (process.env['DRY_RUN'] || 'true').toLowerCase() === 'true';
+  const modeLabel = backtestMode ? '📊 BACKTEST' : paperMode ? '📝 PAPER TRADING' : dryRunEarly ? '🟢 DRY RUN' : '🔴 LIVE';
 
   console.log(`
 ╔══════════════════════════════════════════════════╗
@@ -114,6 +137,11 @@ async function main(): Promise<void> {
 
   // ── Step 1a: Configure proxy and external APIs ──
   configureProxy(config.proxyUrl);
+
+  // Run proxy diagnostics if proxy is configured
+  if (config.proxyUrl) {
+    await runProxyDiagnostics();
+  }
   configureFinFeed(config.finfeedApiKey);
 
   // Check Bullpen CLI availability

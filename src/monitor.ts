@@ -8,10 +8,10 @@
 import WebSocket from 'ws';
 import { BotConfig, ParsedTrade, DataApiTrade } from './types';
 import { log } from './logger';
-import { proxyFetch, isProxyEnabled } from './proxy';
+import { proxyFetch, isProxyEnabled, getProxyAgent, getProxyUrl, customLookup } from './proxy';
 
 const DATA_API_BASE = 'https://data-api.polymarket.com';
-const WS_URL = 'wss://ws-subscriptions-clob.polymarket.com/ws/';
+const WS_URL = 'wss://ws-subscriptions-clob.polymarket.com/ws/market';
 
 export type OnTradeCallback = (trade: ParsedTrade) => void;
 
@@ -46,11 +46,9 @@ export class TradeMonitor {
     this.startPolling();
 
     // Optionally start WebSocket for faster updates
-    // Note: WebSocket does not route through the proxy — skip if proxy is active
-    if (this.config.useWebsocket && !isProxyEnabled()) {
+    // When proxy is active, route WebSocket through the proxy agent
+    if (this.config.useWebsocket) {
       this.startWebSocket();
-    } else if (this.config.useWebsocket && isProxyEnabled()) {
-      log.warn('WebSocket disabled when proxy is active (REST polling only)');
     }
   }
 
@@ -126,6 +124,7 @@ export class TradeMonitor {
     });
 
     const url = `${DATA_API_BASE}/activity?${params.toString()}`;
+    log.debug(`Polling: ${url}`);
     const response = await proxyFetch(url, {
       headers: { Accept: 'application/json' },
       signal: AbortSignal.timeout(10_000),
@@ -139,11 +138,12 @@ export class TradeMonitor {
     if (!Array.isArray(trades)) return;
 
     for (const raw of trades) {
-      // Deduplicate — only process each trade once
-      if (this.seenTradeIds.has(raw.id)) continue;
-      this.seenTradeIds.add(raw.id);
+      // Generate a stable ID from available fields (API doesn't return an id)
+      const tradeId = `${raw.conditionId}-${raw.proxyWallet}-${raw.timestamp}-${raw.transactionHash || ''}`;
+      if (this.seenTradeIds.has(tradeId)) continue;
+      this.seenTradeIds.add(tradeId);
 
-      const parsed = this.parseTrade(raw);
+      const parsed = this.parseTrade(raw, tradeId);
       if (parsed) {
         log.trade(
           `Detected: ${parsed.side} ${parsed.size.toFixed(2)} USDC @ ${parsed.price.toFixed(4)}` +
@@ -162,11 +162,13 @@ export class TradeMonitor {
 
   /**
    * Parse a raw Data API trade into our internal format.
+   * Maps the actual API fields (proxyWallet, asset, conditionId, etc.)
+   * to the internal ParsedTrade format.
    */
-  private parseTrade(raw: DataApiTrade): ParsedTrade | null {
+  private parseTrade(raw: DataApiTrade, tradeId: string): ParsedTrade | null {
     try {
-      const size = parseFloat(raw.size);
-      const price = parseFloat(raw.price);
+      const size = typeof raw.size === 'number' ? raw.size : parseFloat(String(raw.size));
+      const price = typeof raw.price === 'number' ? raw.price : parseFloat(String(raw.price));
 
       if (isNaN(size) || isNaN(price) || size <= 0 || price <= 0) {
         log.debug(`Skipping invalid trade: size=${raw.size}, price=${raw.price}`);
@@ -174,16 +176,16 @@ export class TradeMonitor {
       }
 
       return {
-        id: raw.id,
-        timestamp: new Date(raw.timestamp).getTime(),
-        market: raw.market,
-        tokenId: raw.asset_id,
+        id: tradeId,
+        timestamp: typeof raw.timestamp === 'number' ? raw.timestamp * 1000 : new Date(raw.timestamp).getTime(),
+        market: raw.conditionId,
+        tokenId: raw.asset,
         side: raw.side,
         size,
         price,
-        user: raw.user.toLowerCase(),
-        outcome: raw.outcome || raw.title || 'Unknown',
-        title: raw.title || '',
+        user: (raw.proxyWallet as string || '').toLowerCase(),
+        outcome: (raw.outcome as string) || (raw.title as string) || 'Unknown',
+        title: (raw.title as string) || '',
       };
     } catch {
       log.debug(`Failed to parse trade: ${JSON.stringify(raw).slice(0, 100)}`);
@@ -204,7 +206,13 @@ export class TradeMonitor {
     if (!this.running) return;
 
     try {
-      this.ws = new WebSocket(WS_URL);
+      // Route WebSocket through proxy if configured
+      const wsAgent = getProxyAgent();
+      // `lookup` is supported by ws at runtime but not in TypeScript types
+      const wsOptions: WebSocket.ClientOptions = wsAgent
+        ? { agent: wsAgent, ...(getProxyUrl()?.startsWith('socks') ? { rejectUnauthorized: false } : {}) }
+        : { lookup: customLookup } as WebSocket.ClientOptions;
+      this.ws = new WebSocket(WS_URL, wsOptions);
 
       this.ws.on('open', () => {
         log.success('WebSocket connected');

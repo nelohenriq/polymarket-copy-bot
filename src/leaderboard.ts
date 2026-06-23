@@ -12,7 +12,7 @@ import { log } from './logger';
 import { proxyFetch } from './proxy';
 import { discoverSmartMoney, getBullpenLeaderboard } from './bullpen';
 
-const DATA_API_BASE = 'https://data-api.polymarket.com';
+const DATA_API_BASE = 'https://data-api.polymarket.com/v1';
 
 // ──────────────────────────────────────────────
 // Leaderboard API Response Types
@@ -23,10 +23,12 @@ interface LeaderboardEntry {
   address?: string;
   pnl?: number;
   volume?: number;
+  vol?: number; // API uses 'vol' not 'volume'
   numTrades?: number;
   winRate?: number;
   name?: string;
-  rank?: number;
+  userName?: string; // API uses 'userName' not 'name'
+  rank?: number | string;
   [key: string]: unknown;
 }
 
@@ -83,8 +85,8 @@ async function analyzeTraderTrades(walletAddress: string): Promise<TradeAnalysis
       };
     }
 
-    const sizes = trades.map((t) => parseFloat(t.size) || 0);
-    const markets = new Set(trades.map((t) => t.market));
+    const sizes = trades.map((t) => typeof t.size === 'number' ? t.size : parseFloat(String(t.size)) || 0);
+    const markets = new Set(trades.map((t) => t.conditionId));
 
     const totalVolume = sizes.reduce((s, v) => s + v, 0);
     const avgTradeSize = totalVolume / trades.length;
@@ -101,7 +103,7 @@ async function analyzeTraderTrades(walletAddress: string): Promise<TradeAnalysis
       consistencyScore = Math.max(0, Math.min(1, 1 - cv / 2));
     }
 
-    const lastTradeTime = new Date(trades[0].timestamp).getTime();
+    const lastTradeTime = typeof trades[0].timestamp === 'number' ? trades[0].timestamp * 1000 : new Date(trades[0].timestamp).getTime();
 
     return {
       totalTrades: trades.length,
@@ -139,27 +141,26 @@ async function analyzeTraderTrades(walletAddress: string): Promise<TradeAnalysis
  * Calculate a composite score for ranking traders.
  * Higher score = better trader to follow.
  *
+ * Note: Win rate is not available from the Polymarket Data API,
+ * so we omit it and redistribute weight to other signals.
+ *
  * Weights:
- * - P&L: 35% (raw profitability)
- * - Win Rate: 25% (skill indicator)
- * - Volume: 15% (activity level — more active = more copy opportunities)
- * - Consistency: 15% (reliable vs lucky)
+ * - P&L: 40% (raw profitability — strongest available signal)
+ * - Volume: 20% (activity level — more active = more copy opportunities)
+ * - Consistency: 20% (reliable vs lucky)
  * - Recency: 10% (recently active traders preferred)
+ * - Trade count: 10% (more trades = more data = more reliable signal)
  */
 function calculateScore(
   entry: LeaderboardEntry,
   analysis: TradeAnalysis,
 ): number {
   const pnl = entry.pnl || 0;
-  const winRate = entry.winRate || 0;
   const volume = entry.volume || 0;
 
   // Normalize each metric to 0-1 scale
   // P&L: positive is good, clamp to reasonable range
   const pnlScore = Math.max(0, Math.min(1, (pnl + 10_000) / 20_000));
-
-  // Win rate: already 0-1
-  const winRateScore = winRate;
 
   // Volume: log scale (a trader with $1M volume isn't 10x better than $100k)
   const volumeScore = volume > 0 ? Math.min(1, Math.log10(volume) / 7) : 0; // 7 = log10(10M)
@@ -173,13 +174,16 @@ function calculateScore(
     : 999;
   const recencyScore = Math.max(0, 1 - hoursSinceLastTrade / 168); // 168 = 1 week
 
+  // Trade count: more trades = more reliable signal (log scale, 100 trades = max)
+  const tradeCountScore = analysis.totalTrades > 0 ? Math.min(1, Math.log10(analysis.totalTrades) / 2) : 0;
+
   // Weighted composite
   const score =
-    pnlScore * 0.35 +
-    winRateScore * 0.25 +
-    volumeScore * 0.15 +
-    consistencyScore * 0.15 +
-    recencyScore * 0.10;
+    pnlScore * 0.40 +
+    volumeScore * 0.20 +
+    consistencyScore * 0.20 +
+    recencyScore * 0.10 +
+    tradeCountScore * 0.10;
 
   return Math.round(score * 1000) / 1000;
 }
@@ -241,18 +245,22 @@ export class LeaderboardScraper {
     log.info(`Fetched ${leaderboard.length} traders from leaderboard`);
 
     // Step 2: Filter by minimum criteria
+    // Normalize fields: API uses 'vol' and 'userName', code expects 'volume' and 'name'
+    for (const entry of leaderboard) {
+      if (entry.vol !== undefined && entry.volume === undefined) entry.volume = entry.vol;
+      if (entry.userName !== undefined && !entry.name) entry.name = entry.userName;
+      if (typeof entry.rank === 'string') entry.rank = parseInt(entry.rank, 10);
+    }
+
+    // The leaderboard API doesn't return winRate or numTrades.
+    // We only filter by P&L here; win rate and trade count are determined
+    // later by analyzing individual trade history.
     const candidates = leaderboard.filter((entry) => {
       const pnl = entry.pnl || 0;
-      const winRate = entry.winRate || 0;
-      const trades = entry.numTrades || 0;
-      return (
-        pnl >= this.config.minPnl &&
-        winRate >= this.config.minWinRate &&
-        trades >= this.config.minTrades
-      );
+      return pnl >= this.config.minPnl;
     });
 
-    log.info(`${candidates.length} traders pass minimum filters (PnL≥$${this.config.minPnl}, WR≥${(this.config.minWinRate * 100).toFixed(0)}%, trades≥${this.config.minTrades})`);
+    log.info(`${candidates.length} traders pass P&L filter (≥$${this.config.minPnl}) — analyzing trade history next`);
 
     if (candidates.length === 0) {
       log.warn('No traders pass minimum filters — try relaxing criteria');
@@ -270,6 +278,13 @@ export class LeaderboardScraper {
       if (!wallet) continue;
 
       const analysis = await analyzeTraderTrades(wallet);
+
+      // Filter by minimum trade count (API doesn't provide win rate data)
+      if (analysis.totalTrades < this.config.minTrades) {
+        log.debug(`Skipping ${wallet.slice(0, 8)}...: only ${analysis.totalTrades} trades (need ≥${this.config.minTrades})`);
+        continue;
+      }
+
       const score = calculateScore(entry, analysis);
 
       const profile: TraderProfile = {
@@ -277,9 +292,9 @@ export class LeaderboardScraper {
         displayName: entry.name || `${wallet.slice(0, 6)}...${wallet.slice(-4)}`,
         pnl: entry.pnl || 0,
         volume: entry.volume || 0,
-        winRate: entry.winRate || 0,
-        tradeCount: entry.numTrades || analysis.totalTrades,
-        profitFactor: this.estimateProfitFactor(entry.winRate || 0, entry.pnl || 0),
+        winRate: 0, // Not available from Data API
+        tradeCount: analysis.totalTrades,
+        profitFactor: 0, // Cannot calculate without win/loss data
         score,
         topCategories: [],
         lastTradeTimestamp: analysis.lastTradeTime,
@@ -374,38 +389,25 @@ export class LeaderboardScraper {
     }
   }
 
-  /**
-   * Estimate profit factor from win rate and P&L.
-   * profitFactor = (wins / losses) * (avg_win / avg_loss)
-   * We approximate this from available data.
-   */
-  private estimateProfitFactor(winRate: number, pnl: number): number {
-    if (winRate <= 0 || winRate >= 1) return 1;
-    // If P&L is positive and win rate is high, profit factor is likely > 1
-    const winLossRatio = winRate / (1 - winRate);
-    // Adjust by P&L direction
-    const pnlMultiplier = pnl > 0 ? 1 + Math.log10(Math.abs(pnl) + 1) / 5 : 0.5;
-    return Math.round(winLossRatio * pnlMultiplier * 100) / 100;
-  }
+
 
   /**
    * Print the discovered leaderboard in a formatted table.
    */
   private printLeaderboard(profiles: TraderProfile[]): void {
     console.log('');
-    console.log('═'.repeat(80));
+    console.log('═'.repeat(65));
     console.log('🏆  Discovered Top Traders');
-    console.log('═'.repeat(80));
+    console.log('═'.repeat(65));
     console.log(
       '#'.padStart(3) +
       '  Wallet'.padEnd(18) +
       'P&L'.padStart(12) +
-      'Win Rate'.padStart(10) +
-      'Trades'.padStart(8) +
       'Volume'.padStart(14) +
+      'Trades'.padStart(8) +
       'Score'.padStart(8),
     );
-    console.log('─'.repeat(80));
+    console.log('─'.repeat(65));
 
     for (let i = 0; i < profiles.length; i++) {
       const p = profiles[i];
@@ -413,14 +415,13 @@ export class LeaderboardScraper {
         `${i + 1}`.padStart(3) +
         `  ${p.displayName}`.padEnd(18) +
         `$${p.pnl.toFixed(0)}`.padStart(12) +
-        `${(p.winRate * 100).toFixed(1)}%`.padStart(10) +
-        `${p.tradeCount}`.padStart(8) +
         `$${p.volume.toFixed(0)}`.padStart(14) +
+        `${p.tradeCount}`.padStart(8) +
         `${p.score.toFixed(3)}`.padStart(8),
       );
     }
 
-    console.log('─'.repeat(80));
+    console.log('─'.repeat(65));
     console.log(`  ${profiles.length} traders selected for copy-trading`);
     console.log('');
   }
