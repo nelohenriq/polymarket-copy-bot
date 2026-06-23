@@ -452,7 +452,8 @@ async function main(): Promise<void> {
   if (config.dryRun && !paperMode) {
     const DASHBOARD_PORT = 3456;
     dashboardServer = http.createServer((req, res) => {
-      if (req.url === '/dry-run-trades.json') {
+      const reqPath = req.url?.split('?')[0] || '/';
+      if (reqPath === '/dry-run-trades.json') {
         res.writeHead(200, { 'Content-Type': 'application/json', 'Access-Control-Allow-Origin': '*' });
         // Always return live stats from memory (up-to-date even if file hasn't been written yet)
         const liveData = {
@@ -462,7 +463,7 @@ async function main(): Promise<void> {
           openPositions: journal ? journal.getOpenPositions().map(e => ({ outcome: e.outcome, tokenId: e.tokenId, shares: e.size, entryPrice: e.entryPrice })) : [],
         };
         res.end(JSON.stringify(liveData));
-      } else if (req.url === '/' || req.url === '/dashboard.html') {
+      } else if (reqPath === '/' || reqPath === '/dashboard.html') {
         try {
           const html = fs.readFileSync(path.join(process.cwd(), 'dashboard.html'), 'utf-8');
           res.writeHead(200, { 'Content-Type': 'text/html' });
@@ -471,7 +472,7 @@ async function main(): Promise<void> {
           res.writeHead(404, { 'Content-Type': 'text/plain' });
           res.end('dashboard.html not found in project root');
         }
-      } else if (req.url === '/favicon.ico') {
+      } else if (reqPath === '/favicon.ico') {
         res.writeHead(204);
         res.end();
       } else {
