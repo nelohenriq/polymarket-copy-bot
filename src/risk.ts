@@ -23,11 +23,10 @@ export class RiskManager {
     this.state = {
       sessionNotional: 0,
       sessionPnl: 0,
-      // Initialize peakCapital to a small baseline so drawdown/total-loss
-      // checks can trigger even before the first profitable trade.
-      // This avoids the edge case where peakCapital=0 makes all
-      // drawdown calculations divide by zero or never trigger.
-      peakCapital: config.maxSessionNotional > 0 ? config.maxSessionNotional * 0.01 : 1,
+      // peakCapital tracks the highest capital reached. Start at 0 —
+      // drawdown checks only apply once the bot has actually traded.
+      // We use a sentinel value of -1 to mean "no trades yet, skip drawdown checks".
+      peakCapital: 0,
       dailyLoss: 0,
       consecutiveLosses: 0,
       consecutiveWins: 0,
@@ -150,7 +149,9 @@ export class RiskManager {
       }
     }
 
-    // Track peak capital
+    // Track peak capital — only set after the bot has been profitable.
+    // peakCapital starts at 0; drawdown checks are skipped until a profitable
+    // trade sets the baseline. The session notional cap provides protection before then.
     if (this.state.sessionPnl > this.state.peakCapital) {
       this.state.peakCapital = this.state.sessionPnl;
     }
