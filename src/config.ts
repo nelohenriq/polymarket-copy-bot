@@ -110,6 +110,7 @@ export function loadConfig(allowMissingKey = false): BotConfig {
     dailyLossLimit: parseFloatEnv('DAILY_LOSS_LIMIT', 0.05),
     maxDrawdown: parseFloatEnv('MAX_DRAWDOWN', 0.25),
     totalLossLimit: parseFloatEnv('TOTAL_LOSS_LIMIT', 0.40),
+    maxSessionProfit: parseFloatEnv('MAX_SESSION_PROFIT', 0),
     useWebsocket: parseBoolEnv('USE_WEBSOCKET', true),
     pollInterval: parseFloatEnv('POLL_INTERVAL', 3000),
     logLevel,
@@ -327,6 +328,7 @@ export function printConfig(config: BotConfig): void {
   console.log(`   Daily loss limit: ${(config.dailyLossLimit * 100).toFixed(1)}%`);
   console.log(`   Max drawdown: ${(config.maxDrawdown * 100).toFixed(1)}%`);
   console.log(`   Total loss halt: ${(config.totalLossLimit * 100).toFixed(1)}%`);
+  console.log(`   Max session profit: ${config.maxSessionProfit > 0 ? `$${config.maxSessionProfit}` : 'disabled'}`);
   console.log(`   WebSocket: ${config.useWebsocket ? 'enabled' : 'disabled'}`);
   console.log(`   Poll interval: ${config.pollInterval}ms`);
   console.log(`   Mode: ${config.dryRun ? '🟢 DRY RUN (simulation)' : '🔴 LIVE TRADING'}`);

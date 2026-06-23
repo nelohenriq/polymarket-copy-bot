@@ -33,6 +33,8 @@ export interface BotConfig {
   maxDrawdown: number;
   /** Total loss limit (permanent halt) */
   totalLossLimit: number;
+  /** Max session profit — stop copying when P&L reaches this (0 = no cap) */
+  maxSessionProfit: number;
   /** Enable WebSocket monitoring */
   useWebsocket: boolean;
   /** REST polling interval in ms */

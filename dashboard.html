@@ -1,0 +1,193 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Polymarket Copy-Bot — Dry-Run Dashboard</title>
+<style>
+  :root {
+    --bg: #0a0e17; --bg2: #111827; --bg3: #1a2236;
+    --border: #1e293b; --text: #e2e8f0; --muted: #64748b;
+    --accent: #6366f1; --green: #10b981; --red: #ef4444;
+    --yellow: #f59e0b; --blue: #3b82f6; --cyan: #06b6d4;
+  }
+  * { margin: 0; padding: 0; box-sizing: border-box; }
+  body {
+    background: var(--bg); color: var(--text);
+    font-family: 'SF Mono', 'Cascadia Code', 'JetBrains Mono', monospace;
+    font-size: 13px; padding: 24px;
+  }
+  h1 {
+    font-size: 20px; margin-bottom: 4px;
+    background: linear-gradient(135deg, var(--accent), var(--cyan));
+    -webkit-background-clip: text; -webkit-text-fill-color: transparent;
+  }
+  .subtitle { color: var(--muted); font-size: 11px; margin-bottom: 20px; }
+  .status-bar {
+    display: flex; gap: 16px; margin-bottom: 20px; flex-wrap: wrap;
+  }
+  .stat-card {
+    background: var(--bg2); border: 1px solid var(--border);
+    border-radius: 8px; padding: 12px 16px; min-width: 140px;
+  }
+  .stat-label { font-size: 10px; color: var(--muted); text-transform: uppercase; letter-spacing: 1px; }
+  .stat-value { font-size: 18px; font-weight: 700; margin-top: 2px; }
+  .stat-green { color: var(--green); }
+  .stat-red { color: var(--red); }
+  .stat-blue { color: var(--blue); }
+  .stat-yellow { color: var(--yellow); }
+  .stat-cyan { color: var(--cyan); }
+  .last-updated { color: var(--muted); font-size: 11px; margin-bottom: 16px; }
+  table {
+    width: 100%; border-collapse: collapse; background: var(--bg2);
+    border: 1px solid var(--border); border-radius: 8px; overflow: hidden;
+  }
+  th {
+    text-align: left; padding: 10px 12px; background: var(--bg3);
+    border-bottom: 1px solid var(--border); font-size: 10px;
+    text-transform: uppercase; letter-spacing: 0.5px; color: var(--muted);
+  }
+  td {
+    padding: 8px 12px; border-bottom: 1px solid var(--border); font-size: 12px;
+  }
+  tr:hover td { background: rgba(99,102,241,0.05); }
+  .side-buy { color: var(--green); font-weight: 600; }
+  .side-sell { color: var(--red); font-weight: 600; }
+  .pnl-pos { color: var(--green); }
+  .pnl-neg { color: var(--red); }
+  .empty-state {
+    text-align: center; padding: 60px 20px; color: var(--muted);
+  }
+  .empty-state .emoji { font-size: 40px; margin-bottom: 12px; }
+  .refresh-indicator {
+    display: inline-block; width: 8px; height: 8px;
+    border-radius: 50%; background: var(--green); margin-right: 6px;
+    animation: pulse 2s ease-in-out infinite;
+  }
+  @keyframes pulse { 0%,100%{opacity:1} 50%{opacity:0.4} }
+  .filter-bar {
+    display: flex; gap: 8px; margin-bottom: 16px; align-items: center;
+  }
+  .filter-bar input {
+    background: var(--bg2); border: 1px solid var(--border);
+    color: var(--text); padding: 6px 12px; border-radius: 6px;
+    font-size: 12px; font-family: inherit; width: 250px;
+  }
+  .filter-bar input:focus { outline: none; border-color: var(--accent); }
+</style>
+</head>
+<body>
+
+<h1>⚡ Polymarket Copy-Bot — Dry-Run Dashboard</h1>
+<div class="subtitle">
+  <span class="refresh-indicator"></span>
+  Auto-refreshes every 5 seconds · Reads <code>dry-run-trades.json</code>
+</div>
+
+<div class="last-updated" id="lastUpdated">Loading...</div>
+
+<div class="status-bar" id="statsBar">
+  <div class="stat-card"><div class="stat-label">Detected</div><div class="stat-value stat-blue" id="statDetected">—</div></div>
+  <div class="stat-card"><div class="stat-label">Copied</div><div class="stat-value stat-green" id="statCopied">—</div></div>
+  <div class="stat-card"><div class="stat-label">Skipped</div><div class="stat-value stat-yellow" id="statSkipped">—</div></div>
+  <div class="stat-card"><div class="stat-label">Failed</div><div class="stat-value stat-red" id="statFailed">—</div></div>
+  <div class="stat-card"><div class="stat-label">Total Volume</div><div class="stat-value stat-cyan" id="statVolume">—</div></div>
+  <div class="stat-card"><div class="stat-label">Trades Logged</div><div class="stat-value" id="statEntries">—</div></div>
+</div>
+
+<div class="filter-bar">
+  <input type="text" id="searchBox" placeholder="Filter by market, outcome, or side..." oninput="renderTable()">
+</div>
+
+<div id="tableContainer">
+  <div class="empty-state">
+    <div class="emoji">📡</div>
+    <div>Waiting for trade data…</div>
+    <div style="margin-top:8px;font-size:11px">Start the bot with <code>npm run dev</code> and trades will appear here.</div>
+  </div>
+</div>
+
+<script>
+let allEntries = [];
+
+async function fetchData() {
+  try {
+    const resp = await fetch('dry-run-trades.json?t=' + Date.now());
+    if (!resp.ok) return;
+    const data = await resp.json();
+
+    // Update stats
+    if (data.stats) {
+      document.getElementById('statDetected').textContent = data.stats.tradesDetected || 0;
+      document.getElementById('statCopied').textContent = data.stats.tradesCopied || 0;
+      document.getElementById('statSkipped').textContent = data.stats.tradesSkipped || 0;
+      document.getElementById('statFailed').textContent = data.stats.tradesFailed || 0;
+      document.getElementById('statVolume').textContent = '$' + (data.stats.totalVolume || 0).toFixed(2);
+    }
+
+    allEntries = data.entries || [];
+    document.getElementById('statEntries').textContent = allEntries.length;
+    document.getElementById('lastUpdated').textContent =
+      'Last updated: ' + (data.lastUpdated ? new Date(data.lastUpdated).toLocaleString() : 'unknown');
+
+    renderTable();
+  } catch (e) {
+    // File doesn't exist yet — show empty state
+  }
+}
+
+function renderTable() {
+  const filter = document.getElementById('searchBox').value.toLowerCase();
+  const entries = allEntries
+    .filter(e => {
+      if (!filter) return true;
+      return (e.market || '').toLowerCase().includes(filter) ||
+             (e.outcome || '').toLowerCase().includes(filter) ||
+             (e.side || '').toLowerCase().includes(filter) ||
+             (e.reason || '').toLowerCase().includes(filter);
+    })
+    .reverse(); // newest first
+
+  if (entries.length === 0) {
+    document.getElementById('tableContainer').innerHTML =
+      '<div class="empty-state"><div class="emoji">📡</div><div>No trades yet</div></div>';
+    return;
+  }
+
+  let html = `<table>
+    <thead><tr>
+      <th>#</th><th>Time</th><th>Side</th><th>Market</th><th>Outcome</th>
+      <th>Shares</th><th>Entry Price</th><th>Exit Price</th><th>P&L</th><th>Source</th>
+    </tr></thead><tbody>`;
+
+  for (const e of entries) {
+    const time = new Date(e.timestamp).toLocaleTimeString();
+    const sideClass = e.side === 'BUY' ? 'side-buy' : 'side-sell';
+    const pnlClass = e.pnl !== undefined && e.pnl !== null ? (e.pnl >= 0 ? 'pnl-pos' : 'pnl-neg') : '';
+    const pnlText = e.pnl !== undefined && e.pnl !== null ? '$' + e.pnl.toFixed(4) : '—';
+    const exitText = e.exitPrice ? '$' + e.exitPrice.toFixed(4) : '—';
+
+    html += `<tr>
+      <td>${e.tradeId || '—'}</td>
+      <td>${time}</td>
+      <td class="${sideClass}">${e.side}</td>
+      <td>${(e.market || '').slice(0, 40)}</td>
+      <td>${(e.outcome || '').slice(0, 30)}</td>
+      <td>${(e.size || 0).toFixed(4)}</td>
+      <td>$${(e.entryPrice || 0).toFixed(4)}</td>
+      <td>${exitText}</td>
+      <td class="${pnlClass}">${pnlText}</td>
+      <td>${e.source || '—'}</td>
+    </tr>`;
+  }
+
+  html += '</tbody></table>';
+  document.getElementById('tableContainer').innerHTML = html;
+}
+
+// Auto-refresh every 5 seconds
+fetchData();
+setInterval(fetchData, 5000);
+</script>
+</body>
+</html>

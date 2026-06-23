@@ -89,6 +89,14 @@ export class RiskManager {
       }
     }
 
+    // Gate 4b: Session profit cap (stop copying when target profit reached)
+    if (this.config.maxSessionProfit > 0 && this.state.sessionPnl >= this.config.maxSessionProfit) {
+      return {
+        allowed: false,
+        reason: `Session profit target reached ($${this.state.sessionPnl.toFixed(2)} >= $${this.config.maxSessionProfit})`,
+      };
+    }
+
     // Gate 5: Daily loss limit
     this.checkDailyReset();
     if (this.state.peakCapital > 0 && this.state.dailyLoss >= this.config.dailyLossLimit * this.state.peakCapital) {
@@ -184,6 +192,9 @@ export class RiskManager {
       `${this.config.maxSessionNotional > 0 ? `$${this.config.maxSessionNotional}` : '∞'}`,
     );
     console.log(`  Session P&L:    $${state.sessionPnl.toFixed(2)}`);
+    if (this.config.maxSessionProfit > 0) {
+      console.log(`  Profit Target:  $${this.config.maxSessionProfit.toFixed(2)} (${((state.sessionPnl / this.config.maxSessionProfit) * 100).toFixed(0)}%)`);
+    }
     console.log(`  Peak Capital:   $${state.peakCapital.toFixed(2)}`);
 
     if (state.halted) {

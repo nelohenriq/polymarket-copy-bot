@@ -208,9 +208,10 @@ async function main(): Promise<void> {
 
   const aiFilter = aiConfig ? new AITradeFilter(aiConfig) : null;
 
-  // Paper trading journal
-  const journal = paperMode ? new TradeJournal() : null;
+  // Trade journal — tracks all trades for paper trading, backtesting, AND dry-run mode
+  const journal = (paperMode || config.dryRun) ? new TradeJournal() : null;
   const startingCapital = paperMode ? paperConfig!.startingCapital : 0;
+  const dashboardPath = 'dry-run-trades.json';
 
   // Initialize Telegram notifier (skip for paper trading unless explicitly configured)
   let telegram: TelegramNotifier | null = null;
@@ -225,21 +226,41 @@ async function main(): Promise<void> {
     await telegram.connect();
   }
 
+  // ── Persist journal to disk (for dry-run dashboard) ──
+  function persistJournal(): void {
+    if (!journal || !config.dryRun) return;
+    try {
+      const data = {
+        lastUpdated: new Date().toISOString(),
+        stats: { ...stats },
+        entries: journal.getEntries(),
+        openPositions: journal.getOpenPositions().map(e => ({ outcome: e.outcome, tokenId: e.tokenId, shares: e.size, entryPrice: e.entryPrice })),
+      };
+      fs.writeFileSync(dashboardPath, JSON.stringify(data, null, 2), 'utf-8');
+    } catch {
+      // Silently ignore — dashboard is non-critical
+    }
+  }
+
   // ── Step 5: Handle incoming trades ──
   async function handleNewTrade(trade: ParsedTrade): Promise<void> {
     stats.tradesDetected++;
 
-    // In paper mode, process both BUY and SELL for journal exit tracking
+    // Record SELL as exit in journal (all modes with a journal — must run BEFORE BUY-only filter)
+    if (trade.side === 'SELL' && journal) {
+      journal.recordExit(trade.tokenId, trade.price, trade.timestamp);
+      if (paperMode) {
+        log.info(`[PAPER] Exit recorded: ${trade.outcome} @ $${trade.price}`);
+      }
+      if (config.dryRun && !paperMode) {
+        persistJournal();
+      }
+    }
+
+    // In non-paper mode, skip SELL trades for execution (BUY-only mode)
     if (trade.side === 'SELL' && !paperMode) {
       log.debug(`Skipping SELL trade from ${trade.user.slice(0, 8)}... (BUY-only mode)`);
       stats.tradesSkipped++;
-      return;
-    }
-
-    // Paper mode: record SELL as exit in journal
-    if (trade.side === 'SELL' && paperMode && journal) {
-      journal.recordExit(trade.tokenId, trade.price, trade.timestamp);
-      log.info(`[PAPER] Exit recorded: ${trade.outcome} @ $${trade.price}`);
       return;
     }
 
@@ -324,9 +345,12 @@ async function main(): Promise<void> {
             side: result.side,
           });
 
-          // Record in paper journal
+          // Record in trade journal
           if (journal) {
-            journal.recordEntry(trade, result.copyNotional, result.price, 'copy-trade');
+            journal.recordEntry(trade, result.copyNotional, result.price, paperMode ? 'copy-trade' : 'dry-run');
+            if (config.dryRun) {
+              persistJournal();
+            }
           }
 
           telegram?.notifyExecution({ side: result.side, shares: result.copyShares, price: result.price, notional: result.copyNotional, orderId: result.orderId ?? '', outcome: trade.outcome });
@@ -470,12 +494,25 @@ async function main(): Promise<void> {
         const content = ext === 'csv' ? MetricsCalculator.exportJournalCSV(entries) : MetricsCalculator.exportJournalJSON(entries);
 
         try {
-        fs.writeFileSync(filename, content, 'utf-8');
+          fs.writeFileSync(filename, content, 'utf-8');
           log.success(`Journal exported: ${filename}`);
         } catch (err) {
           const msg = err instanceof Error ? err.message : String(err);
           log.warn(`Failed to export journal: ${msg}`);
         }
+      }
+    }
+
+    // Dry-run mode: persist final journal and print summary
+    if (config.dryRun && !paperMode && journal) {
+      persistJournal();
+      const entries = journal.getEntries();
+      if (entries.length > 0) {
+        const closedTrades = journal.getClosedTrades();
+        const openPositions = journal.getOpenPositions();
+        console.log(`\n📋 Dry-Run Trade Journal: ${entries.length} entries, ${closedTrades.length} closed, ${openPositions.length} open`);
+        console.log(`   View dashboard: open dashboard.html in your browser`);
+        console.log(`   Trade data: ${dashboardPath}`);
       }
     }
 
