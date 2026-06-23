@@ -460,7 +460,9 @@ async function main(): Promise<void> {
           lastUpdated: new Date().toISOString(),
           stats: { ...stats },
           entries: journal ? journal.getEntries() : [],
-          openPositions: journal ? journal.getOpenPositions().map(e => ({ outcome: e.outcome, tokenId: e.tokenId, shares: e.size, entryPrice: e.entryPrice })) : [],
+          openPositions: journal ? journal.getOpenPositions().map(e => ({ outcome: e.outcome, tokenId: e.tokenId, shares: e.size, entryPrice: e.entryPrice, timestamp: e.timestamp, market: e.market, reason: e.reason })) : [],
+          positions: positions.getAllPositions().filter(p => p.shares > 0).map(p => ({ market: p.market, outcome: p.outcome, shares: p.shares, notional: p.notional, avgPrice: p.avgPrice })),
+          risk: { ...riskManager.getState() },
         };
         res.end(JSON.stringify(liveData));
       } else if (reqPath === '/' || reqPath === '/dashboard.html') {

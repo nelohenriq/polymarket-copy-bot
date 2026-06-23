@@ -309,6 +309,7 @@ export interface TradeJournalEntry {
   tradeId: string;
   timestamp: number;
   market: string;
+  title?: string; // Human-readable market question (e.g. "Will Trump win 2024?")
   tokenId: string;
   outcome: string;
   side: 'BUY' | 'SELL';
@@ -320,6 +321,7 @@ export interface TradeJournalEntry {
   holdTimeMs?: number;
   reason: string;
   source: string; // e.g. 'copy-trade', 'signal', 'manual'
+  trader?: string; // Target wallet address that triggered this trade
 }
 
 /** Snapshot of the virtual portfolio at a point in time */

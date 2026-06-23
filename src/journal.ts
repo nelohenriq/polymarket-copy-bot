@@ -20,6 +20,7 @@ export class TradeJournal {
       tradeId: `T${String(++this.counter).padStart(6, '0')}`,
       timestamp: trade.timestamp,
       market: trade.market,
+      title: trade.title || trade.market,
       tokenId: trade.tokenId,
       outcome: trade.outcome,
       side: trade.side,
@@ -27,6 +28,7 @@ export class TradeJournal {
       entryPrice: price,
       reason: `Copy-trade from ${trade.user.slice(0, 8)}...`,
       source,
+      trader: trade.user,
     };
 
     this.entries.push(entry);
