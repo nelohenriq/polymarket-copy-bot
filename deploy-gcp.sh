@@ -70,7 +70,7 @@ systemctl start docker
 curl -fsSL https://deb.nodesource.com/setup_22.x | bash -
 apt-get install -y -qq nodejs
 ' \
-    --tags=polymarket-bot \
+    --tags=polymarket-bot,dashboard \
     --scopes=default
 
   echo "✅ VM created. Waiting for startup script to finish..."
@@ -78,6 +78,17 @@ apt-get install -y -qq nodejs
   sleep 120
 else
   echo "── VM ${VM_NAME} already exists."
+fi
+
+# ── Open dashboard port (3456) in firewall ──
+if ! gcloud compute firewall-rules describe allow-dashboard &> /dev/null; then
+  echo "── Opening dashboard port (3456) in firewall..."
+  gcloud compute firewall-rules create allow-dashboard \
+    --allow=tcp:3456 \
+    --target-tags=polymarket-bot \
+    --description="Polymarket bot dashboard"
+else
+  echo "── Dashboard firewall rule already exists."
 fi
 
 # ── Get VM external IP ──
@@ -114,6 +125,6 @@ echo "  Stop bot:     gcloud compute ssh ${VM_NAME} --zone=${ZONE} --command='cd
 echo "  Restart bot:  gcloud compute ssh ${VM_NAME} --zone=${ZONE} --command='cd ~/polymarket-bot && sudo docker compose restart'"
 echo "  SSH into VM:  gcloud compute ssh ${VM_NAME} --zone=${ZONE}"
 echo "  Delete VM:    gcloud compute instances delete ${VM_NAME} --zone=${ZONE}"
-echo ""
-echo "  Monthly cost: ~\$5/month (e2-micro in europe-west1)"
+echo ""  echo "  Dashboard:    http://${VM_IP}:3456"
+  echo "  Monthly cost: ~\$5/month (e2-micro in europe-west1)"
 echo "═══════════════════════════════════════════════════"
