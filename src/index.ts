@@ -454,12 +454,14 @@ async function main(): Promise<void> {
     dashboardServer = http.createServer((req, res) => {
       if (req.url === '/dry-run-trades.json') {
         res.writeHead(200, { 'Content-Type': 'application/json', 'Access-Control-Allow-Origin': '*' });
-        try {
-          const data = fs.readFileSync(dashboardPath, 'utf-8');
-          res.end(data);
-        } catch {
-          res.end(JSON.stringify({ lastUpdated: null, stats: { ...stats }, entries: [], openPositions: [] }));
-        }
+        // Always return live stats from memory (up-to-date even if file hasn't been written yet)
+        const liveData = {
+          lastUpdated: new Date().toISOString(),
+          stats: { ...stats },
+          entries: journal ? journal.getEntries() : [],
+          openPositions: journal ? journal.getOpenPositions().map(e => ({ outcome: e.outcome, tokenId: e.tokenId, shares: e.size, entryPrice: e.entryPrice })) : [],
+        };
+        res.end(JSON.stringify(liveData));
       } else if (req.url === '/' || req.url === '/dashboard.html') {
         try {
           const html = fs.readFileSync(path.join(process.cwd(), 'dashboard.html'), 'utf-8');
@@ -487,6 +489,13 @@ async function main(): Promise<void> {
     });
   }
 
+  // ── Periodic journal persistence (keeps dashboard data fresh) ──
+  let persistInterval: ReturnType<typeof setInterval> | null = null;
+  if (config.dryRun && !paperMode && journal) {
+    persistInterval = setInterval(() => { persistJournal(); }, 30_000); // Every 30 seconds
+    persistJournal(); // Write initial file so dashboard loads immediately
+  }
+
   // ── Step 7: Periodic status reports ──
   const statusInterval = setInterval(() => {
     printStatusReport();
@@ -509,6 +518,7 @@ async function main(): Promise<void> {
     if (onchainMonitor) onchainMonitor.stop();
     if (intelligence) intelligence.stop();
     clearInterval(statusInterval);
+    if (persistInterval) clearInterval(persistInterval);
     if (marketRefreshInterval) clearInterval(marketRefreshInterval);
     printFinalReport();
 
