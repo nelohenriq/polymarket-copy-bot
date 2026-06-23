@@ -39,6 +39,36 @@ function parseBoolEnv(key: string, defaultValue: boolean): boolean {
 const VALID_ORDER_TYPES: CopyOrderType[] = ['FOK', 'GTC', 'FAK'];
 const VALID_LOG_LEVELS: LogLevel[] = ['debug', 'info', 'warn', 'error'];
 
+// Well-known Hardhat test key — safe to use in DRY_RUN mode (no real funds)
+const DRY_RUN_PRIVATE_KEY = '0xac0974bec39a17e36ba4a6b4d238ff944bacb478cbed5efcae784d7bf4f2ff80';
+
+/** Placeholder patterns that indicate the user hasn't set a real key */
+const PLACEHOLDER_PATTERNS = ['YOUR_PRIVATE_KEY', 'your-private-key', '0xYOUR', 'replace-me', 'changeme'];
+
+function isPlaceholderKey(key: string): boolean {
+  return PLACEHOLDER_PATTERNS.some(p => key.includes(p));
+}
+
+function resolvePrivateKey(allowMissing: boolean): string {
+  const raw = process.env['PRIVATE_KEY'] || '';
+  if (!raw) {
+    if (allowMissing) return DRY_RUN_PRIVATE_KEY;
+    throw new Error('Missing required environment variable: PRIVATE_KEY');
+  }
+  if (isPlaceholderKey(raw)) {
+    console.warn('⚠️  PRIVATE_KEY is a placeholder — using dry-run test key (no real funds)');
+    return DRY_RUN_PRIVATE_KEY;
+  }
+  // Validate hex format early — gives a clear error instead of cryptic "invalid hexlify" from ethers
+  if (!raw.startsWith('0x') || raw.length !== 66) {
+    throw new Error(
+      'PRIVATE_KEY must be a 0x-prefixed 66-character hex string (64 hex digits). ' +
+      `Got: ${raw.slice(0, 10)}... (${raw.length} chars)`
+    );
+  }
+  return raw;
+}
+
 /**
  * Load the main bot configuration.
  * @param allowMissingKey - If true, PRIVATE_KEY is optional (used for backtest mode)
@@ -67,7 +97,7 @@ export function loadConfig(allowMissingKey = false): BotConfig {
   }
 
   const config: BotConfig = {
-    privateKey: allowMissingKey ? (process.env['PRIVATE_KEY'] || '0x' + '00'.repeat(32)) : requireEnv('PRIVATE_KEY'),
+    privateKey: resolvePrivateKey(allowMissingKey),
     targetWallets,
     rpcUrl: optionalEnv('RPC_URL', 'https://polygon-rpc.com'),
     positionMultiplier: parseFloatEnv('POSITION_MULTIPLIER', 0.1),
