@@ -70,7 +70,7 @@ systemctl start docker
 curl -fsSL https://deb.nodesource.com/setup_22.x | bash -
 apt-get install -y -qq nodejs
 ' \
-    --tags=polymarket-bot,dashboard \
+    --tags=polymarket-bot \
     --scopes=default
 
   echo "✅ VM created. Waiting for startup script to finish..."
@@ -100,7 +100,7 @@ echo "── Uploading bot files to VM..."
 # Create directory first, then copy (avoids suppressing real errors)
 gcloud compute ssh "${VM_NAME}" --zone="${ZONE}" --command="mkdir -p ~/polymarket-bot"
 gcloud compute scp --zone="${ZONE}" --recurse \
-  src/ package.json package-lock.json tsconfig.json Dockerfile docker-compose.yml .env.example .env \
+  src/ package.json package-lock.json tsconfig.json Dockerfile docker-compose.yml dashboard.html .env.example .env \
   "${VM_NAME}":~/polymarket-bot/
 
 # ── Build and start the bot ──
