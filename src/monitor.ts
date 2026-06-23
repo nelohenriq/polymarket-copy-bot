@@ -27,6 +27,11 @@ export class TradeMonitor {
   private polling = false;
   private running = false;
 
+  /** Cache: conditionId → human-readable market question */
+  private marketTitleCache: Map<string, string> = new Map();
+  /** Set of conditionIds currently being fetched (avoid duplicate requests) */
+  private pendingTitleFetches: Set<string> = new Set();
+
   /** Minimum interval between WS-triggered polls (debounce) */
   private readonly WS_POLL_DEBOUNCE_MS = 500;
 
@@ -175,17 +180,27 @@ export class TradeMonitor {
         return null;
       }
 
+      // Resolve market title: use API field, or cache from Gamma API
+      const conditionId = raw.conditionId as string;
+      const cachedTitle = this.marketTitleCache.get(conditionId) || '';
+      const title = (raw.title as string) || cachedTitle || '';
+
+      // If we don't have a title yet, fetch it asynchronously from Gamma API
+      if (!title && conditionId && !this.pendingTitleFetches.has(conditionId)) {
+        this.fetchMarketTitle(conditionId, raw.asset as string);
+      }
+
       return {
         id: tradeId,
         timestamp: typeof raw.timestamp === 'number' ? raw.timestamp * 1000 : new Date(raw.timestamp).getTime(),
-        market: raw.conditionId,
+        market: conditionId,
         tokenId: raw.asset,
         side: raw.side,
         size,
         price,
         user: (raw.proxyWallet as string || '').toLowerCase(),
         outcome: (raw.outcome as string) || (raw.title as string) || 'Unknown',
-        title: (raw.title as string) || '',
+        title,
       };
     } catch {
       log.debug(`Failed to parse trade: ${JSON.stringify(raw).slice(0, 100)}`);
@@ -284,6 +299,49 @@ export class TradeMonitor {
       log.debug('WS-triggered immediate poll');
       this.pollAllWallets();
     }, 100); // 100ms delay to batch rapid-fire WS events
+  }
+
+  /**
+   * Fetch market title from Gamma API and cache it.
+   * Called lazily when we encounter a conditionId with no cached title.
+   */
+  private fetchMarketTitle(conditionId: string, tokenId?: string): void {
+    this.pendingTitleFetches.add(conditionId);
+
+    // Try condition_id first, fall back to token_id (both are valid Gamma API filters)
+    const urls = [
+      `https://gamma-api.polymarket.com/markets?condition_id=${conditionId}&limit=1`,
+    ];
+    if (tokenId) {
+      urls.push(`https://gamma-api.polymarket.com/markets?token_id=${tokenId}&limit=1`);
+    }
+
+    const resolve = async (): Promise<void> => {
+      for (const url of urls) {
+        try {
+          const resp = await proxyFetch(url, {
+            headers: { Accept: 'application/json' },
+            signal: AbortSignal.timeout(8_000),
+          });
+          if (!resp.ok) continue;
+          const markets = (await resp.json()) as Array<Record<string, unknown>>;
+          if (Array.isArray(markets) && markets.length > 0) {
+            const question = String(markets[0].question || '');
+            if (question) {
+              this.marketTitleCache.set(conditionId, question);
+              log.debug(`Market title resolved: ${conditionId.slice(0, 12)}… → ${question.slice(0, 60)}`);
+              return;
+            }
+          }
+        } catch {
+          continue;
+        }
+      }
+    };
+
+    resolve().finally(() => {
+      this.pendingTitleFetches.delete(conditionId);
+    });
   }
 
   private scheduleReconnect(): void {
