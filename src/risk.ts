@@ -91,7 +91,7 @@ export class RiskManager {
 
     // Gate 5: Daily loss limit
     this.checkDailyReset();
-    if (this.state.dailyLoss >= this.config.dailyLossLimit * this.state.peakCapital) {
+    if (this.state.peakCapital > 0 && this.state.dailyLoss >= this.config.dailyLossLimit * this.state.peakCapital) {
       return {
         allowed: false,
         reason: `Daily loss limit hit ($${this.state.dailyLoss.toFixed(2)})`,
