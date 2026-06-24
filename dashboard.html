@@ -592,7 +592,7 @@ async function fetchData() {
     renderCards();
 
     // Reconciliation
-    renderRecon(d.reconciliation);
+    renderRecon(d.reconciliation, d.config);
 
     // Position count history for chart
     const openCount = (d.openPositions || []).length;
@@ -940,7 +940,7 @@ function renderPosChart() {
   setupSparklineTooltip(svg, 'pos', tooltipPts, W, H, pad);
 }
 
-function renderRecon(rc) {
+function renderRecon(rc, cfg) {
   if (!rc) {
     document.getElementById('reconPanel').innerHTML = '<div style="color:var(--muted);font-size:12px;text-align:center;padding:12px 0">No data</div>';
     return;
@@ -985,7 +985,11 @@ function renderRecon(rc) {
   // Status alerts
   if (mode === 'exit-only') {
     h += '<div class="recon-alert warn">⏸️ Exit-only mode — BUY trades paused until positions close</div>';
-  } else if (rc.catchUpDeviationBlocks > 0) {
+  } else  // Editable deviation setting
+  const devPct = ((cfg?.maxMissedSellDeviation ?? 0.15) * 100).toFixed(0);
+  h += `<div class="recon-item" style="margin-top:8px;padding-top:8px;border-top:1px solid var(--border)"><span class="rl">Deviation Limit</span><span class="rv"><input type="range" id="deviationSlider" min="5" max="50" value="${devPct}" style="width:80px;vertical-align:middle;accent-color:var(--accent)" onchange="updateDeviation(this.value)"> <span id="deviationValue">${devPct}%</span></span></div>`;
+
+  if (rc.catchUpDeviationBlocks > 0) {
     h += '<div class="recon-alert warn">⚠️ Price deviation blocked auto-close on ' + rc.catchUpDeviationBlocks + ' position(s) — manual review needed</div>';
   } else if (rc.stalePositionCount > 0) {
     h += '<div class="recon-alert warn">⏰ ' + rc.stalePositionCount + ' stale position(s) held >30 days</div>';
@@ -999,6 +1003,19 @@ function renderRecon(rc) {
 fetchData();
 setInterval(fetchData, 5000);
 setInterval(updateUptime, 10000);
+
+async function updateDeviation(pct) {
+  const val = parseInt(pct, 10);
+  document.getElementById('deviationValue').textContent = val + '%';
+  try {
+    const r = await fetch('/api/config', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ maxMissedSellDeviation: val / 100 }),
+    });
+    if (!r.ok) console.error('Failed to update deviation');
+  } catch (e) { console.error('Failed to update deviation', e); }
+}
 
 // ── Sparkline Tooltip Engine ──
 function setupSparklineTooltip(svg, chartType, points, W, H, pad) {

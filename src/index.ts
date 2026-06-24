@@ -317,6 +317,9 @@ async function main(): Promise<void> {
     }
   }
 
+  // ── Runtime-adjustable settings ──
+  let runtimeMaxMissedSellDeviation = config.maxMissedSellDeviation ?? 0.15;
+
   // ── Mode tracking ──
   let notionalCappedLogged = false;
   let profitTargetMonitoring = false;
@@ -615,7 +618,7 @@ async function main(): Promise<void> {
       let missedSells = 0;
       let priceDeviationBlocks = 0;
       reconciliation.catchUpRan = true;
-      const maxDeviation = config.maxMissedSellDeviation ?? 0.15;
+      const maxDeviation = runtimeMaxMissedSellDeviation;
 
       for (const wallet of config.targetWallets) {
         const lastTs = lastProcessedTimestamps.get(wallet) || 0;
@@ -979,10 +982,34 @@ async function main(): Promise<void> {
             maxPerMarketNotional: config.maxPerMarketNotional,
             positionMultiplier: config.positionMultiplier,
             targetWallets: config.targetWallets.length,
+            maxMissedSellDeviation: runtimeMaxMissedSellDeviation,
           },
           reconciliation: { ...reconciliation },
         };
         res.end(JSON.stringify(liveData));
+      } else if (reqPath === '/api/config' && req.method === 'POST') {
+        let body = '';
+        req.on('data', (chunk: Buffer) => { body += chunk.toString(); });
+        req.on('end', () => {
+          try {
+            const update = JSON.parse(body);
+            if (typeof update.maxMissedSellDeviation === 'number' && update.maxMissedSellDeviation >= 0 && update.maxMissedSellDeviation <= 1) {
+              runtimeMaxMissedSellDeviation = update.maxMissedSellDeviation;
+              log.info(`Max missed sell deviation updated to ${(runtimeMaxMissedSellDeviation * 100).toFixed(0)}%`);
+              res.writeHead(200, { 'Content-Type': 'application/json', 'Access-Control-Allow-Origin': '*' });
+              res.end(JSON.stringify({ ok: true, maxMissedSellDeviation: runtimeMaxMissedSellDeviation }));
+            } else {
+              res.writeHead(400, { 'Content-Type': 'application/json', 'Access-Control-Allow-Origin': '*' });
+              res.end(JSON.stringify({ error: 'maxMissedSellDeviation must be a number between 0 and 1' }));
+            }
+          } catch {
+            res.writeHead(400, { 'Content-Type': 'application/json', 'Access-Control-Allow-Origin': '*' });
+            res.end(JSON.stringify({ error: 'Invalid JSON' }));
+          }
+        });
+      } else if (reqPath === '/api/config' && req.method === 'OPTIONS') {
+        res.writeHead(204, { 'Access-Control-Allow-Origin': '*', 'Access-Control-Allow-Methods': 'POST, OPTIONS', 'Access-Control-Allow-Headers': 'Content-Type' });
+        res.end();
       } else if (reqPath === '/' || reqPath === '/dashboard.html') {
         try {
           const html = fs.readFileSync(path.join(process.cwd(), 'dashboard.html'), 'utf-8');
