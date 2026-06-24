@@ -175,6 +175,13 @@
     font-size: 10px; color: var(--accent); margin-top: 2px; text-decoration: none; opacity: 0.7;
   }
   .card-market .market-link:hover { opacity: 1; text-decoration: underline; }
+  .card-market .meta-tags { display: flex; gap: 6px; margin-top: 3px; flex-wrap: wrap; }
+  .card-market .meta-tag {
+    font-size: 9px; padding: 1px 7px; border-radius: 4px; font-weight: 600;
+    letter-spacing: 0.5px; text-transform: uppercase;
+  }
+  .card-market .meta-tag.cat { background: var(--cyan-bg); color: var(--cyan); border: 1px solid rgba(6,182,212,0.15); }
+  .card-market .meta-tag.vol { background: var(--blue-bg); color: var(--blue); border: 1px solid rgba(59,130,246,0.15); }
   .card-price { text-align: right; }
   .card-price .val { font-size: 15px; font-weight: 700; font-variant-numeric: tabular-nums; }
   .card-price .lbl { font-size: 10px; color: var(--muted); text-transform: uppercase; letter-spacing: 0.5px; }
@@ -497,7 +504,7 @@ function renderCards() {
     if (activeTab === 'open' && e.exitPrice) return false;
     if (activeTab === 'closed' && !e.exitPrice) return false;
     if (!filter) return true;
-    return [e.title, e.market, e.outcome, e.side, e.trader, e.reason, e.source].join(' ').toLowerCase().includes(filter);
+    return [e.title, e.market, e.outcome, e.side, e.trader, e.reason, e.source, e.category].join(' ').toLowerCase().includes(filter);
   }).reverse();
 
   if (entries.length === 0) {
@@ -527,6 +534,10 @@ function renderCards() {
         <div class="card-market">
           <div class="outcome">${esc((e.outcome||'').slice(0,40))}</div>
           <div class="market-name" title="${fullTitle}">${esc(title)}</div>
+          <div class="meta-tags">
+            ${e.category ? `<span class="meta-tag cat">${esc(e.category)}</span>` : ''}
+            ${e.volume24hr ? `<span class="meta-tag vol">24h vol: ${fmtShort$(e.volume24hr)}</span>` : ''}
+          </div>
           ${polyLink ? `<a class="market-link" href="${polyLink}" target="_blank" rel="noopener" onclick="event.stopPropagation()">↗ polymarket.com</a>` : ''}
         </div>
         <div class="card-price"><div class="val">$${(e.entryPrice||0).toFixed(4)}</div><div class="lbl">Entry</div></div>
@@ -543,6 +554,8 @@ function renderCards() {
           <div class="detail-grid" style="margin-top:8px">
             <div class="detail-item"><div class="dl">Market ID</div><div class="dv" style="font-size:10px;color:var(--muted);font-family:monospace">${esc((e.market||'').slice(0,20))}…</div></div>
             <div class="detail-item"><div class="dl">Token ID</div><div class="dv" style="font-size:10px;color:var(--muted);font-family:monospace">${esc((e.tokenId||'').slice(0,16))}…</div></div>
+            <div class="detail-item"><div class="dl">Category</div><div class="dv">${esc(e.category||'—')}</div></div>
+            <div class="detail-item"><div class="dl">24h Volume</div><div class="dv">${e.volume24hr ? fmtShort$(e.volume24hr) : '—'}</div></div>
             <div class="detail-item"><div class="dl">Reason</div><div class="dv" style="font-size:11px;color:var(--muted)">${esc(e.reason||'—')}</div></div>
           </div>
         </div>

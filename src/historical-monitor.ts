@@ -164,6 +164,8 @@ export class HistoricalMonitor {
         outcome: (raw.outcome as string) || (raw.title as string) || 'Unknown',
         title: (raw.title as string) || '',
         slug: raw.slug as string || undefined,
+        volume24hr: typeof raw.volume24hr === 'number' ? raw.volume24hr : typeof raw.volume_24hr === 'number' ? raw.volume_24hr as number : undefined,
+        category: typeof raw.groupItemTitle === 'string' ? raw.groupItemTitle : typeof raw.groupTitle === 'string' ? raw.groupTitle : undefined,
       };
     } catch {
       return null;

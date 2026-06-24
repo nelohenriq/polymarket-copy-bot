@@ -27,8 +27,8 @@ export class TradeMonitor {
   private polling = false;
   private running = false;
 
-  /** Cache: conditionId → human-readable market question */
-  private marketTitleCache: Map<string, string> = new Map();
+  /** Cache: conditionId → market metadata (title, volume, category) */
+  private marketMetaCache: Map<string, { title: string; volume24hr?: number; category?: string }> = new Map();
   /** Set of conditionIds currently being fetched (avoid duplicate requests) */
   private pendingTitleFetches: Set<string> = new Set();
 
@@ -182,8 +182,8 @@ export class TradeMonitor {
 
       // Resolve market title: use API field, or cache from Gamma API
       const conditionId = raw.conditionId as string;
-      const cachedTitle = this.marketTitleCache.get(conditionId) || '';
-      const title = (raw.title as string) || cachedTitle || '';
+      const cachedMeta = this.marketMetaCache.get(conditionId);
+      const title = (raw.title as string) || cachedMeta?.title || '';
 
       // If we don't have a title yet, fetch it asynchronously from Gamma API
       if (!title && conditionId && !this.pendingTitleFetches.has(conditionId)) {
@@ -202,6 +202,8 @@ export class TradeMonitor {
         outcome: (raw.outcome as string) || (raw.title as string) || 'Unknown',
         title,
         slug: raw.slug as string || undefined,
+        volume24hr: cachedMeta?.volume24hr,
+        category: cachedMeta?.category,
       };
     } catch {
       log.debug(`Failed to parse trade: ${JSON.stringify(raw).slice(0, 100)}`);
@@ -327,9 +329,26 @@ export class TradeMonitor {
           if (!resp.ok) continue;
           const markets = (await resp.json()) as Array<Record<string, unknown>>;
           if (Array.isArray(markets) && markets.length > 0) {
-            const question = String(markets[0].question || '');
+            const m = markets[0];
+            const question = String(m.question || '');
             if (question) {
-              this.marketTitleCache.set(conditionId, question);
+              const meta: { title: string; volume24hr?: number; category?: string } = { title: question };
+              // Gamma API uses both camelCase and snake_case at different versions
+              const vol = m.volume24hr ?? m.volume_24hr;
+              if (typeof vol === 'number') meta.volume24hr = vol;
+              else if (vol) meta.volume24hr = Number(vol);
+              // Category: try groupItemTitle, groupTitle, then first tag from events
+              if (typeof m.groupItemTitle === 'string' && m.groupItemTitle) {
+                meta.category = m.groupItemTitle;
+              } else if (typeof m.groupTitle === 'string' && m.groupTitle) {
+                meta.category = m.groupTitle;
+              } else if (Array.isArray(m.tags) && m.tags.length > 0) {
+                meta.category = String(m.tags[0]);
+              } else if (Array.isArray(m.events) && m.events.length > 0) {
+                const evt = m.events[0] as Record<string, unknown>;
+                if (Array.isArray(evt.tags) && evt.tags.length > 0) meta.category = String(evt.tags[0]);
+              }
+              this.marketMetaCache.set(conditionId, meta);
               log.debug(`Market title resolved: ${conditionId.slice(0, 12)}… → ${question.slice(0, 60)}`);
               return;
             }

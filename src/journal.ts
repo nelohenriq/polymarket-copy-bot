@@ -30,6 +30,8 @@ export class TradeJournal {
       source,
       trader: trade.user,
       slug: trade.slug,
+      volume24hr: trade.volume24hr,
+      category: trade.category,
     };
 
     this.entries.push(entry);

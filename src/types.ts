@@ -111,6 +111,8 @@ export interface ParsedTrade {
   outcome: string;
   title: string;
   slug?: string;
+  volume24hr?: number;
+  category?: string;
 }
 
 // ──────────────────────────────────────────────
@@ -324,6 +326,8 @@ export interface TradeJournalEntry {
   source: string; // e.g. 'copy-trade', 'signal', 'manual'
   trader?: string; // Target wallet address that triggered this trade
   slug?: string; // Market slug for Polymarket links
+  volume24hr?: number; // 24h market volume from Gamma API
+  category?: string; // Market category/group from Gamma API
 }
 
 /** Snapshot of the virtual portfolio at a point in time */

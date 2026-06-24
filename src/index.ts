@@ -248,7 +248,7 @@ async function main(): Promise<void> {
         lastUpdated: new Date().toISOString(),
         stats: { ...stats },
         entries: journal.getEntries(),
-        openPositions: journal.getOpenPositions().map(e => ({ outcome: e.outcome, tokenId: e.tokenId, shares: e.size, entryPrice: e.entryPrice })),
+        openPositions: journal.getOpenPositions().map(e => ({ outcome: e.outcome, tokenId: e.tokenId, shares: e.size, entryPrice: e.entryPrice, title: e.title, trader: e.trader, slug: e.slug, volume24hr: e.volume24hr, category: e.category })),
       };
       fs.writeFileSync(dashboardPath, JSON.stringify(data, null, 2), 'utf-8');
     } catch {
@@ -515,7 +515,7 @@ async function main(): Promise<void> {
           startTime: stats.startTime,
           stats: { ...stats },
           entries: journalEntries,
-          openPositions: journal ? journal.getOpenPositions().map(e => ({ outcome: e.outcome, tokenId: e.tokenId, shares: e.size, entryPrice: e.entryPrice, timestamp: e.timestamp, market: e.market, title: e.title, reason: e.reason, trader: e.trader })) : [],
+          openPositions: journal ? journal.getOpenPositions().map(e => ({ outcome: e.outcome, tokenId: e.tokenId, shares: e.size, entryPrice: e.entryPrice, timestamp: e.timestamp, market: e.market, title: e.title, reason: e.reason, trader: e.trader, slug: e.slug, volume24hr: e.volume24hr, category: e.category })) : [],
           positions: positions.getAllPositions().filter(p => p.shares > 0).map(p => ({
             market: p.market,
             title: titleByToken.get(p.tokenId) || p.outcome,
