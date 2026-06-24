@@ -189,11 +189,23 @@ async function main(): Promise<void> {
     return;
   }
 
-  // ── Step 2: Initialize CLOB client ──
-  const { clob, wallet } = await initClient(config);
+  // ── Step 2: Initialize CLOB client (skip in paper mode — no real orders) ──
+  let clob: import('@polymarket/clob-client').ClobClient | null = null;
+  let wallet: import('ethers').Wallet;
+
+  if (paperMode) {
+    // Paper mode: only need wallet address for logging — skip CLOB auth
+    const { ethers } = await import('ethers');
+    wallet = new ethers.Wallet(config.privateKey);
+    log.info(`[PAPER] Wallet: ${wallet.address} (simulated — no real orders)`);
+  } else {
+    const bundle = await initClient(config);
+    clob = bundle.clob;
+    wallet = bundle.wallet;
+  }
 
   // ── Step 3: Set token allowances (one-time, skips if already set) ──
-  if (!config.dryRun && !paperMode) {
+  if (!config.dryRun && !paperMode && clob) {
     await ensureAllowances(clob);
   } else {
     log.info(paperMode ? '[PAPER] Skipping allowance setup' : '[DRY RUN] Skipping allowance setup');
@@ -206,7 +218,7 @@ async function main(): Promise<void> {
   // Swap executor based on mode
   const executor = paperMode
     ? new PaperExecutor(config, paperConfig!)
-    : new TradeExecutor(config, clob);
+    : new TradeExecutor(config, clob!);
 
   const aiFilter = aiConfig ? new AITradeFilter(aiConfig) : null;
 
@@ -719,8 +731,15 @@ async function runBacktest(
   if (closedTrades.length > 0) {
     const metrics = MetricsCalculator.calculate(entries, backtestConfig.startingCapital);
     console.log(MetricsCalculator.formatReport(metrics));
+  } else if (entries.length > 0) {
+    console.log('\n  ⚠️  No closed trades — all positions are still open');
+    console.log('  → The target wallets only had BUY trades during this time range');
+    console.log('  → They haven\'t sold yet, so there are no exit prices or P&L to calculate');
+    console.log('  → Try a wider BACKTEST_START → BACKTEST_END range to capture full round-trips');
   } else {
-    console.log('\n  ⚠️  No closed trades — not enough data for performance metrics');
+    console.log('\n  ⚠️  No trades found for target wallets in this time range');
+    console.log('  → Check that TARGET_WALLETS contains valid Polymarket proxy wallets');
+    console.log('  → Try a wider BACKTEST_START → BACKTEST_END range');
   }
 
   // Export results
