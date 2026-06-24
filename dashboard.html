@@ -240,6 +240,89 @@
   .c-cyan { color: var(--cyan); } .c-muted { color: var(--muted); }
   .c-accent { color: var(--accent); } .c-orange { color: var(--orange); }
   .c-pink { color: var(--pink); }
+
+  /* ── Trader Modal ── */
+  .modal-overlay {
+    position: fixed; inset: 0; z-index: 1000;
+    background: rgba(0,0,0,0.6); backdrop-filter: blur(4px);
+    display: flex; align-items: center; justify-content: center;
+    opacity: 0; pointer-events: none; transition: opacity 0.25s ease;
+  }
+  .modal-overlay.visible { opacity: 1; pointer-events: auto; }
+  .modal {
+    background: var(--bg2); border: 1px solid var(--border-light);
+    border-radius: 16px; width: 680px; max-width: 95vw; max-height: 90vh;
+    overflow-y: auto; box-shadow: 0 24px 80px rgba(0,0,0,0.5);
+    transform: translateY(20px) scale(0.97); transition: transform 0.25s ease;
+  }
+  .modal-overlay.visible .modal { transform: translateY(0) scale(1); }
+  .modal-header {
+    padding: 20px 24px 16px; border-bottom: 1px solid var(--border);
+    display: flex; justify-content: space-between; align-items: flex-start;
+    position: sticky; top: 0; background: var(--bg2); z-index: 1; border-radius: 16px 16px 0 0;
+  }
+  .modal-header h2 { font-size: 16px; font-weight: 700; color: var(--text); }
+  .modal-header .addr { font-size: 12px; color: var(--cyan); font-family: 'SF Mono','Fira Code',monospace; margin-top: 4px; word-break: break-all; }
+  .modal-close {
+    background: var(--bg3); border: 1px solid var(--border); border-radius: 8px;
+    width: 32px; height: 32px; display: flex; align-items: center; justify-content: center;
+    cursor: pointer; color: var(--muted); font-size: 16px; transition: all 0.2s; flex-shrink: 0;
+  }
+  .modal-close:hover { color: var(--text); border-color: var(--border-light); background: var(--bg4); }
+  .modal-body { padding: 20px 24px 24px; }
+  .modal-stats {
+    display: grid; grid-template-columns: repeat(3, 1fr); gap: 10px; margin-bottom: 20px;
+  }
+  .modal-stat {
+    background: var(--bg3); border: 1px solid var(--border); border-radius: 10px;
+    padding: 12px 14px; text-align: center;
+  }
+  .modal-stat .ms-label { font-size: 9px; color: var(--muted); text-transform: uppercase; letter-spacing: 1px; font-weight: 500; }
+  .modal-stat .ms-val { font-size: 18px; font-weight: 700; margin-top: 2px; }
+  .modal-stat .ms-sub { font-size: 10px; color: var(--muted); margin-top: 1px; }
+  .modal-section { margin-bottom: 18px; }
+  .modal-section-title {
+    font-size: 10px; color: var(--muted); text-transform: uppercase;
+    letter-spacing: 1.2px; font-weight: 600; margin-bottom: 10px;
+    padding-bottom: 5px; border-bottom: 1px solid var(--border);
+  }
+  .modal-tags { display: flex; gap: 6px; flex-wrap: wrap; }
+  .modal-tag {
+    font-size: 10px; padding: 3px 10px; border-radius: 6px; font-weight: 600;
+    background: var(--cyan-bg); color: var(--cyan); border: 1px solid rgba(6,182,212,0.15);
+  }
+  .modal-highlight {
+    display: flex; gap: 12px; margin-bottom: 18px;
+  }
+  .modal-highlight-card {
+    flex: 1; padding: 12px 14px; border-radius: 10px; border: 1px solid var(--border);
+  }
+  .modal-highlight-card.best { background: var(--green-bg); border-color: rgba(16,185,129,0.2); }
+  .modal-highlight-card.worst { background: var(--red-bg); border-color: rgba(239,68,68,0.2); }
+  .modal-highlight-card .mh-label { font-size: 9px; text-transform: uppercase; letter-spacing: 1px; font-weight: 600; }
+  .modal-highlight-card.best .mh-label { color: var(--green); }
+  .modal-highlight-card.worst .mh-label { color: var(--red); }
+  .modal-highlight-card .mh-val { font-size: 16px; font-weight: 700; margin-top: 4px; }
+  .modal-highlight-card .mh-id { font-size: 10px; color: var(--muted); margin-top: 2px; font-family: monospace; }
+  .modal-trades-table { width: 100%; border-collapse: collapse; font-size: 12px; }
+  .modal-trades-table th {
+    text-align: left; padding: 6px 10px; color: var(--muted); font-size: 10px;
+    text-transform: uppercase; letter-spacing: 0.8px; font-weight: 600;
+    border-bottom: 1px solid var(--border);
+  }
+  .modal-trades-table td {
+    padding: 7px 10px; border-bottom: 1px solid var(--border); vertical-align: middle;
+  }
+  .modal-trades-table tr:last-child td { border-bottom: none; }
+  .modal-trades-table tr:hover td { background: var(--bg3); }
+  .modal-trades-table .side-badge {
+    display: inline-block; padding: 1px 6px; border-radius: 4px;
+    font-size: 9px; font-weight: 700; text-transform: uppercase;
+  }
+  .modal-trades-table .side-badge.buy { background: var(--green-bg); color: var(--green); }
+  .modal-trades-table .side-badge.sell { background: var(--red-bg); color: var(--red); }
+  .trader-item { cursor: pointer; }
+  .trader-item:hover { background: var(--bg3); }
 </style>
 </head>
 <body>
@@ -308,6 +391,34 @@
 </div>
 
 </div><!-- /app -->
+
+<!-- ═══ Trader Detail Modal ═══ -->
+<div class="modal-overlay" id="traderModal" onclick="closeTraderModal(event)">
+  <div class="modal" onclick="event.stopPropagation()">
+    <div class="modal-header">
+      <div>
+        <h2 id="modalTraderName">Trader</h2>
+        <div class="addr" id="modalTraderAddr"></div>
+      </div>
+      <div class="modal-close" onclick="closeTraderModal()">✕</div>
+    </div>
+    <div class="modal-body">
+      <div class="modal-stats" id="modalStats"></div>
+      <div class="modal-section" id="modalCategoriesSection" style="display:none">
+        <div class="modal-section-title">Markets Traded</div>
+        <div class="modal-tags" id="modalCategories"></div>
+      </div>
+      <div class="modal-highlight" id="modalHighlights"></div>
+      <div class="modal-section">
+        <div class="modal-section-title">Recent Trades</div>
+        <table class="modal-trades-table">
+          <thead><tr><th>Outcome</th><th>Side</th><th>Price</th><th>P&L</th><th>Time</th></tr></thead>
+          <tbody id="modalTradesBody"></tbody>
+        </table>
+      </div>
+    </div>
+  </div>
+</div>
 
 <script>
 let allEntries = [], allPositions = [], allRisk = {}, allTraders = [], activeTab = 'all';
@@ -456,9 +567,10 @@ function renderTraders() {
     return;
   }
   let h = '';
-  for (const t of traders) {
+  for (let i = 0; i < traders.length; i++) {
+    const t = traders[i];
     const wrClass = (t.wins + t.losses) > 0 ? (t.winRate >= 0.5 ? 'pos' : 'neg') : 'neutral';
-    h += `<div class="trader-item">
+    h += `<div class="trader-item" data-tidx="${i}" onclick="openTraderModal(${i})">
       <div>
         <div class="trader-addr" title="${esc(t.address)}">${esc(t.short)}</div>
         <div style="font-size:10px;color:var(--muted);margin-top:1px">${fmtShort$(t.volume)} vol</div>
@@ -471,6 +583,76 @@ function renderTraders() {
   }
   document.getElementById('traderPanel').innerHTML = h;
 }
+
+function openTraderModal(idx) {
+  const t = allTraders[idx];
+  if (!t) return;
+  document.getElementById('modalTraderName').textContent = t.short;
+  document.getElementById('modalTraderAddr').textContent = t.address;
+
+  // Stats grid
+  const avgHold = t.avgHoldTimeMs ? fmtTime(t.avgHoldTimeMs) : '—';
+  const firstTrade = t.firstTrade ? new Date(t.firstTrade).toLocaleDateString() : '—';
+  const lastTrade = t.lastTrade ? new Date(t.lastTrade).toLocaleDateString() : '—';
+  document.getElementById('modalStats').innerHTML =
+    `<div class="modal-stat"><div class="ms-label">Trades</div><div class="ms-val">${t.trades}</div><div class="ms-sub">${t.openPositions || 0} open</div></div>` +
+    `<div class="modal-stat"><div class="ms-label">Volume</div><div class="ms-val">${fmtShort$(t.volume)}</div></div>` +
+    `<div class="modal-stat"><div class="ms-label">P&L</div><div class="ms-val ${t.pnl >= 0 ? 'c-green' : 'c-red'}">${fmt$(t.pnl)}</div></div>` +
+    `<div class="modal-stat"><div class="ms-label">Win Rate</div><div class="ms-val ${(t.wins+t.losses) > 0 ? (t.winRate >= 0.5 ? 'c-green' : 'c-red') : 'c-muted'}">${(t.wins+t.losses) > 0 ? fmtPct(t.winRate) : '—'}</div><div class="ms-sub">${t.wins}W / ${t.losses}L</div></div>` +
+    `<div class="modal-stat"><div class="ms-label">Avg Hold</div><div class="ms-val">${avgHold}</div></div>` +
+    `<div class="modal-stat"><div class="ms-label">Active</div><div class="ms-val">${firstTrade}</div><div class="ms-sub">→ ${lastTrade}</div></div>`;
+
+  // Categories
+  const cats = t.categories || [];
+  const catSection = document.getElementById('modalCategoriesSection');
+  if (cats.length > 0) {
+    catSection.style.display = '';
+    document.getElementById('modalCategories').innerHTML = cats.map(c => `<span class="modal-tag">${esc(c)}</span>`).join('');
+  } else {
+    catSection.style.display = 'none';
+  }
+
+  // Best / Worst trade highlights
+  let hlHtml = '';
+  if (t.bestTrade) {
+    hlHtml += `<div class="modal-highlight-card best"><div class="mh-label">Best Trade</div><div class="mh-val c-green">${fmt$(t.bestTrade.pnl)}</div><div class="mh-id">${esc(t.bestTrade.tradeId)}</div></div>`;
+  }
+  if (t.worstTrade) {
+    hlHtml += `<div class="modal-highlight-card worst"><div class="mh-label">Worst Trade</div><div class="mh-val c-red">${fmt$(t.worstTrade.pnl)}</div><div class="mh-id">${esc(t.worstTrade.tradeId)}</div></div>`;
+  }
+  document.getElementById('modalHighlights').innerHTML = hlHtml;
+
+  // Recent trades table
+  const trades = (t.recentTrades || []).slice().reverse(); // newest first
+  let tbody = '';
+  if (trades.length === 0) {
+    tbody = '<tr><td colspan="5" style="text-align:center;color:var(--muted);padding:20px">No trades yet</td></tr>';
+  } else {
+    for (const tr of trades) {
+      const pnlCls = tr.pnl != null ? (tr.pnl >= 0 ? 'c-green' : 'c-red') : '';
+      const outcomeShort = (tr.outcome || '').slice(0, 35);
+      const timeAgo = fmtTime(Date.now() - tr.timestamp) + ' ago';
+      tbody += `<tr>
+        <td title="${esc(tr.title || '')}">${esc(outcomeShort)}</td>
+        <td><span class="side-badge ${tr.side === 'BUY' ? 'buy' : 'sell'}">${tr.side}</span></td>
+        <td style="font-variant-numeric:tabular-nums">$${(tr.price||0).toFixed(4)}</td>
+        <td class="${pnlCls}" style="font-weight:600;font-variant-numeric:tabular-nums">${tr.pnl != null ? fmt$(tr.pnl) : '—'}</td>
+        <td style="color:var(--muted)">${timeAgo}</td>
+      </tr>`;
+    }
+  }
+  document.getElementById('modalTradesBody').innerHTML = tbody;
+
+  document.getElementById('traderModal').classList.add('visible');
+  document.body.style.overflow = 'hidden';
+}
+
+function closeTraderModal(e) {
+  if (e && e.target !== e.currentTarget) return;
+  document.getElementById('traderModal').classList.remove('visible');
+  document.body.style.overflow = '';
+}
+document.addEventListener('keydown', e => { if (e.key === 'Escape') closeTraderModal(); });
 
 function renderPositions(openJournal) {
   const pos = allPositions;

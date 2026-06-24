@@ -490,24 +490,52 @@ async function main(): Promise<void> {
         for (const e of journalEntries) {
           if (e.title && e.tokenId) titleByToken.set(e.tokenId, e.title);
         }
-        // Per-trader aggregation
-        const traderMap = new Map<string, { trades: number; volume: number; pnl: number; wins: number; losses: number }>();
+        // Per-trader aggregation with enriched details
+        const traderMap = new Map<string, {
+          trades: number; volume: number; pnl: number; wins: number; losses: number;
+          categories: Set<string>; recentTrades: Array<{ tradeId: string; outcome: string; title: string; side: string; price: number; pnl?: number; timestamp: number; notional: number; slug?: string }>;
+          bestTrade: { tradeId: string; pnl: number } | null; worstTrade: { tradeId: string; pnl: number } | null;
+          firstTrade: number; lastTrade: number; openPositions: number; avgHoldTimeMs: number; totalHoldMs: number; closedCount: number;
+        }>();
         for (const e of journalEntries) {
           if (!e.trader) continue;
-          const t = traderMap.get(e.trader) || { trades: 0, volume: 0, pnl: 0, wins: 0, losses: 0 };
+          const t = traderMap.get(e.trader) || {
+            trades: 0, volume: 0, pnl: 0, wins: 0, losses: 0,
+            categories: new Set<string>(), recentTrades: [], bestTrade: null, worstTrade: null,
+            firstTrade: Infinity, lastTrade: 0, openPositions: 0, avgHoldTimeMs: 0, totalHoldMs: 0, closedCount: 0,
+          };
           t.trades++;
           t.volume += (e.entryPrice || 0) * (e.size || 0);
+          if (e.category) t.categories.add(e.category);
+          t.firstTrade = Math.min(t.firstTrade, e.timestamp);
+          t.lastTrade = Math.max(t.lastTrade, e.timestamp);
           if (e.pnl !== undefined) {
             t.pnl += e.pnl;
+            t.closedCount++;
+            if (e.holdTimeMs) t.totalHoldMs += e.holdTimeMs;
             if (e.pnl > 0) t.wins++; else if (e.pnl < 0) t.losses++;
+            if (!t.bestTrade || e.pnl > t.bestTrade.pnl) t.bestTrade = { tradeId: e.tradeId, pnl: e.pnl };
+            if (!t.worstTrade || e.pnl < t.worstTrade.pnl) t.worstTrade = { tradeId: e.tradeId, pnl: e.pnl };
+          } else {
+            t.openPositions++;
           }
+          // Keep last 20 trades per trader for the modal
+          t.recentTrades.push({ tradeId: e.tradeId, outcome: e.outcome, title: e.title || e.market, side: e.side, price: e.entryPrice, pnl: e.pnl, timestamp: e.timestamp, notional: (e.entryPrice || 0) * (e.size || 0), slug: e.slug });
+          if (t.recentTrades.length > 20) t.recentTrades.shift();
           traderMap.set(e.trader, t);
         }
         const traders = Array.from(traderMap.entries()).map(([addr, t]) => ({
           address: addr,
           short: addr.slice(0, 6) + '…' + addr.slice(-4),
-          ...t,
+          trades: t.trades, volume: t.volume, pnl: t.pnl, wins: t.wins, losses: t.losses,
           winRate: (t.wins + t.losses) > 0 ? t.wins / (t.wins + t.losses) : 0,
+          categories: Array.from(t.categories),
+          recentTrades: t.recentTrades,
+          bestTrade: t.bestTrade, worstTrade: t.worstTrade,
+          firstTrade: t.firstTrade === Infinity ? 0 : t.firstTrade,
+          lastTrade: t.lastTrade,
+          openPositions: t.openPositions,
+          avgHoldTimeMs: t.closedCount > 0 ? t.totalHoldMs / t.closedCount : 0,
         })).sort((a, b) => b.trades - a.trades);
 
         const liveData = {
