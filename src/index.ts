@@ -302,6 +302,7 @@ async function main(): Promise<void> {
         stats,
         journal.getCounter(),
       );
+      reconciliation.lastStateSave = new Date().toISOString();
     } catch {
       // Silently ignore — dashboard is non-critical
     }
@@ -311,6 +312,18 @@ async function main(): Promise<void> {
   let exitOnlyMode = false;
   let exitOnlyLogged = false;
 
+  // ── Reconciliation tracking ──
+  const reconciliation = {
+    lastStateSave: savedState?.savedAt || null,
+    stateRestored: !!savedState,
+    catchUpRan: false as boolean,
+    catchUpMissedSells: 0,
+    catchUpDeviationBlocks: 0,
+    stalePositionCount: 0,
+    stalePositions: [] as string[],
+    mode: 'normal' as 'normal' | 'exit-only' | 'profit-shutdown',
+  };
+
   // ── Step 5: Handle incoming trades ──
   async function handleNewTrade(trade: ParsedTrade): Promise<void> {
     stats.tradesDetected++;
@@ -319,6 +332,7 @@ async function main(): Promise<void> {
     if (exitOnlyMode && riskManager.isProfitTargetReached()) return; // Already shutting down
     if (riskManager.isProfitTargetReached()) {
       exitOnlyMode = true;
+      reconciliation.mode = 'profit-shutdown';
       log.success(`🎯 SESSION PROFIT TARGET REACHED ($${riskManager.getState().sessionPnl.toFixed(2)} >= $${config.maxSessionProfit})`);
       persistJournal();
       telegram?.notifyRisk({ type: 'halt', message: `🎯 Profit target reached: $${riskManager.getState().sessionPnl.toFixed(2)} — shutting down`, trade: '' });
@@ -331,6 +345,7 @@ async function main(): Promise<void> {
       if (!exitOnlyLogged) {
         exitOnlyLogged = true;
         exitOnlyMode = true;
+        reconciliation.mode = 'exit-only';
         log.warn(`⏸️  Notional cap reached ($${riskManager.getState().sessionNotional.toFixed(2)} / $${config.maxSessionNotional}) — exit-only mode, monitoring for position exits`);
         telegram?.notifyRisk({ type: 'blocked', message: `⏸️ Notional cap reached — monitoring exits only until positions close`, trade: '' });
       }
@@ -342,6 +357,7 @@ async function main(): Promise<void> {
     if (exitOnlyMode && !riskManager.isNotionalCapped()) {
       exitOnlyMode = false;
       exitOnlyLogged = false;
+      reconciliation.mode = 'normal';
       log.success(`▶️  Notional below cap ($${riskManager.getState().sessionNotional.toFixed(2)} / $${config.maxSessionNotional}) — resuming normal trading`);
     }
 
@@ -561,6 +577,7 @@ async function main(): Promise<void> {
 
       let missedSells = 0;
       let priceDeviationBlocks = 0;
+      reconciliation.catchUpRan = true;
       const maxDeviation = config.maxMissedSellDeviation ?? 0.15;
 
       for (const wallet of config.targetWallets) {
@@ -655,6 +672,8 @@ async function main(): Promise<void> {
       }
 
       const openAfter = journal.getOpenPositions().length;
+      reconciliation.catchUpMissedSells = missedSells;
+      reconciliation.catchUpDeviationBlocks = priceDeviationBlocks;
       if (missedSells > 0 || priceDeviationBlocks > 0) {
         log.info(`   Catch-up complete: ${missedSells} missed exits processed, ${priceDeviationBlocks} blocked (price deviation), ${openAfter} positions still open`);
       } else {
@@ -677,6 +696,8 @@ async function main(): Promise<void> {
       const holdMs = now - pos.timestamp;
       if (holdMs > staleWarnMs && !staleAlerted.has(pos.tokenId)) {
         staleAlerted.add(pos.tokenId);
+        reconciliation.stalePositionCount = staleAlerted.size;
+        reconciliation.stalePositions = Array.from(staleAlerted);
         const holdDays = (holdMs / 86_400_000).toFixed(1);
         log.warn(`⏰ STALE POSITION: ${pos.outcome.slice(0, 30)} held for ${holdDays} days (entry: $${pos.entryPrice.toFixed(4)})`);
         telegram?.notifyRisk({
@@ -787,6 +808,7 @@ async function main(): Promise<void> {
             positionMultiplier: config.positionMultiplier,
             targetWallets: config.targetWallets.length,
           },
+          reconciliation: { ...reconciliation },
         };
         res.end(JSON.stringify(liveData));
       } else if (reqPath === '/' || reqPath === '/dashboard.html') {

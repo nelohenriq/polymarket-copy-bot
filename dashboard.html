@@ -323,6 +323,25 @@
   .modal-trades-table .side-badge.sell { background: var(--red-bg); color: var(--red); }
   .trader-item { cursor: pointer; }
   .trader-item:hover { background: var(--bg3); }
+
+  /* ── Reconciliation Panel ── */
+  .recon-item { display: flex; justify-content: space-between; align-items: center; padding: 6px 0; font-size: 12px; }
+  .recon-item:not(:last-child) { border-bottom: 1px solid var(--border); }
+  .recon-item .rl { color: var(--muted); }
+  .recon-item .rv { font-weight: 600; font-variant-numeric: tabular-nums; }
+  .recon-badge {
+    display: inline-block; padding: 2px 8px; border-radius: 5px;
+    font-size: 10px; font-weight: 700; text-transform: uppercase; letter-spacing: 0.5px;
+  }
+  .recon-badge.normal { background: var(--green-bg); color: var(--green); border: 1px solid rgba(16,185,129,0.15); }
+  .recon-badge.exit-only { background: var(--yellow-bg); color: var(--yellow); border: 1px solid rgba(245,158,11,0.15); }
+  .recon-badge.profit { background: var(--accent); color: #fff; border: 1px solid rgba(99,102,241,0.3); }
+  .recon-alert {
+    margin-top: 8px; padding: 6px 10px; border-radius: 8px;
+    font-size: 11px; line-height: 1.4;
+  }
+  .recon-alert.warn { background: var(--yellow-bg); border: 1px solid rgba(245,158,11,0.15); color: var(--yellow); }
+  .recon-alert.ok { background: var(--green-bg); border: 1px solid rgba(16,185,129,0.1); color: var(--green); }
 </style>
 </head>
 <body>
@@ -386,6 +405,10 @@
     <div class="panel">
       <div class="panel-head"><span class="icon">📂</span> Open Exposure <span id="posCount" style="color:var(--muted);font-weight:400;font-size:11px"></span></div>
       <div class="panel-body" id="posPanel"><div style="color:var(--muted);font-size:12px;text-align:center;padding:12px 0">No positions</div></div>
+    </div>
+    <div class="panel">
+      <div class="panel-head"><span class="icon">🔄</span> Reconciliation</div>
+      <div class="panel-body" id="reconPanel"><div style="color:var(--muted);font-size:12px;text-align:center;padding:12px 0">Loading…</div></div>
     </div>
   </div>
 </div>
@@ -531,6 +554,9 @@ async function fetchData() {
     allEntries = entries;
     document.getElementById('lastUpdated').textContent = d.lastUpdated ? new Date(d.lastUpdated).toLocaleTimeString() : '—';
     renderCards();
+
+    // Reconciliation
+    renderRecon(d.reconciliation);
   } catch(e) {}
 }
 
@@ -785,6 +811,53 @@ function renderSparkline() {
     `<polygon points="${fillPoints}" fill="${color}" opacity="0.08"/>` +
     `<polyline points="${points.join(' ')}" fill="none" stroke="${color}" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"/>` +
     `<circle cx="${points[points.length-1].split(',')[0]}" cy="${points[points.length-1].split(',')[1]}" r="2.5" fill="${color}"/>`;
+}
+
+function renderRecon(rc) {
+  if (!rc) {
+    document.getElementById('reconPanel').innerHTML = '<div style="color:var(--muted);font-size:12px;text-align:center;padding:12px 0">No data</div>';
+    return;
+  }
+  const mode = rc.mode || 'normal';
+  const modeLabel = mode === 'exit-only' ? '⏸ Exit Only' : mode === 'profit-shutdown' ? '🎯 Profit Hit' : '✅ Normal';
+  const modeClass = mode === 'normal' ? 'normal' : mode === 'exit-only' ? 'exit-only' : 'profit';
+
+  let h = '<div style="display:flex;flex-direction:column;gap:6px">';
+  h += `<div class="recon-item"><span class="rl">Mode</span><span class="recon-badge ${modeClass}">${modeLabel}</span></div>`;
+  h += `<div class="recon-item"><span class="rl">State Restored</span><span class="rv ${rc.stateRestored ? 'c-green' : 'c-muted'}">${rc.stateRestored ? 'Yes' : 'No'}</span></div>`;
+
+  if (rc.lastStateSave) {
+    const ago = fmtTime(Date.now() - new Date(rc.lastStateSave).getTime());
+    h += `<div class="recon-item"><span class="rl">Last Save</span><span class="rv">${ago} ago</span></div>`;
+  }
+
+  if (rc.catchUpRan) {
+    h += `<div class="recon-item"><span class="rl">Catch-up</span><span class="rv c-green">Ran</span></div>`;
+    if (rc.catchUpMissedSells > 0) {
+      h += `<div class="recon-item"><span class="rl">Missed Exits</span><span class="rv c-green">${rc.catchUpMissedSells} processed</span></div>`;
+    }
+    if (rc.catchUpDeviationBlocks > 0) {
+      h += `<div class="recon-item"><span class="rl">Price Blocks</span><span class="rv c-red">${rc.catchUpDeviationBlocks} blocked</span></div>`;
+    }
+  }
+
+  if (rc.stalePositionCount > 0) {
+    h += `<div class="recon-item"><span class="rl">Stale Positions</span><span class="rv c-yellow">${rc.stalePositionCount} ⚠</span></div>`;
+  }
+  h += '</div>';
+
+  // Status alerts
+  if (mode === 'exit-only') {
+    h += '<div class="recon-alert warn">⏸️ Exit-only mode — BUY trades paused until positions close</div>';
+  } else if (rc.catchUpDeviationBlocks > 0) {
+    h += '<div class="recon-alert warn">⚠️ Price deviation blocked auto-close on ' + rc.catchUpDeviationBlocks + ' position(s) — manual review needed</div>';
+  } else if (rc.stalePositionCount > 0) {
+    h += '<div class="recon-alert warn">⏰ ' + rc.stalePositionCount + ' stale position(s) held >30 days</div>';
+  } else if (rc.stateRestored) {
+    h += '<div class="recon-alert ok">✅ State restored — positions and journal loaded from disk</div>';
+  }
+
+  document.getElementById('reconPanel').innerHTML = h;
 }
 
 fetchData();
