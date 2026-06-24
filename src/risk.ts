@@ -166,6 +166,22 @@ export class RiskManager {
   }
 
   /**
+   * Check if session notional cap is reached (bot should enter exit-only mode).
+   */
+  isNotionalCapped(): boolean {
+    if (this.config.maxSessionNotional <= 0) return false;
+    return this.state.sessionNotional >= this.config.maxSessionNotional;
+  }
+
+  /**
+   * Check if session profit target is reached (bot should shut down).
+   */
+  isProfitTargetReached(): boolean {
+    if (this.config.maxSessionProfit <= 0) return false;
+    return this.state.sessionPnl >= this.config.maxSessionProfit;
+  }
+
+  /**
    * Get current risk state for display.
    */
   getState(): RiskState {

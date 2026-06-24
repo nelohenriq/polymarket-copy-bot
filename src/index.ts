@@ -307,9 +307,43 @@ async function main(): Promise<void> {
     }
   }
 
+  // ── Exit-only mode tracking ──
+  let exitOnlyMode = false;
+  let exitOnlyLogged = false;
+
   // ── Step 5: Handle incoming trades ──
   async function handleNewTrade(trade: ParsedTrade): Promise<void> {
     stats.tradesDetected++;
+
+    // ── Profit target reached → graceful shutdown ──
+    if (exitOnlyMode && riskManager.isProfitTargetReached()) return; // Already shutting down
+    if (riskManager.isProfitTargetReached()) {
+      exitOnlyMode = true;
+      log.success(`🎯 SESSION PROFIT TARGET REACHED ($${riskManager.getState().sessionPnl.toFixed(2)} >= $${config.maxSessionProfit})`);
+      persistJournal();
+      telegram?.notifyRisk({ type: 'halt', message: `🎯 Profit target reached: $${riskManager.getState().sessionPnl.toFixed(2)} — shutting down`, trade: '' });
+      shutdown('PROFIT TARGET').catch(() => process.exit(0));
+      return;
+    }
+
+    // ── Notional cap reached → exit-only mode (skip BUYs, process SELLs) ──
+    if (trade.side === 'BUY' && riskManager.isNotionalCapped()) {
+      if (!exitOnlyLogged) {
+        exitOnlyLogged = true;
+        exitOnlyMode = true;
+        log.warn(`⏸️  Notional cap reached ($${riskManager.getState().sessionNotional.toFixed(2)} / $${config.maxSessionNotional}) — exit-only mode, monitoring for position exits`);
+        telegram?.notifyRisk({ type: 'blocked', message: `⏸️ Notional cap reached — monitoring exits only until positions close`, trade: '' });
+      }
+      stats.tradesSkipped++;
+      return;
+    }
+
+    // If we were in exit-only mode but notional dropped below cap, resume normal trading
+    if (exitOnlyMode && !riskManager.isNotionalCapped()) {
+      exitOnlyMode = false;
+      exitOnlyLogged = false;
+      log.success(`▶️  Notional below cap ($${riskManager.getState().sessionNotional.toFixed(2)} / $${config.maxSessionNotional}) — resuming normal trading`);
+    }
 
     // Record SELL as exit in journal (all modes with a journal — must run BEFORE BUY-only filter)
     if (trade.side === 'SELL' && journal) {
