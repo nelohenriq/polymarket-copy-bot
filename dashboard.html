@@ -342,6 +342,26 @@
   }
   .recon-alert.warn { background: var(--yellow-bg); border: 1px solid rgba(245,158,11,0.15); color: var(--yellow); }
   .recon-alert.ok { background: var(--green-bg); border: 1px solid rgba(16,185,129,0.1); color: var(--green); }
+
+  /* ── Sparkline Tooltip ── */
+  .spark-tooltip {
+    position: fixed; z-index: 2000; pointer-events: none;
+    background: var(--bg4); border: 1px solid var(--border-light);
+    border-radius: 8px; padding: 8px 12px;
+    box-shadow: 0 8px 24px rgba(0,0,0,0.4);
+    font-size: 11px; line-height: 1.5;
+    opacity: 0; transition: opacity 0.12s ease;
+    white-space: nowrap;
+  }
+  .spark-tooltip.visible { opacity: 1; }
+  .spark-tooltip .tt-time { color: var(--muted); font-size: 10px; margin-bottom: 4px; }
+  .spark-tooltip .tt-val { font-weight: 700; font-variant-numeric: tabular-nums; }
+  .spark-tooltip .tt-label { color: var(--muted); font-size: 10px; }
+
+  /* ── Sparkline crosshair ── */
+  .sparkline-pill svg { cursor: crosshair; }
+  .sparkline-pill svg .crosshair { stroke: var(--border-light); stroke-width: 0.5; stroke-dasharray: 2,2; }
+  .sparkline-pill svg .hover-dot { transition: r 0.1s ease; }
 </style>
 </head>
 <body>
@@ -415,6 +435,12 @@
 </div>
 
 </div><!-- /app -->
+
+<!-- ═══ Sparkline Tooltip ═══ -->
+<div class="spark-tooltip" id="sparkTooltip">
+  <div class="tt-time" id="ttTime"></div>
+  <div id="ttBody"></div>
+</div>
 
 <!-- ═══ Trader Detail Modal ═══ -->
 <div class="modal-overlay" id="traderModal" onclick="closeTraderModal(event)">
@@ -810,16 +836,22 @@ function renderSparkline() {
   const points = pnlHistory.map((p, i) => {
     const x = pad + (i / (pnlHistory.length - 1)) * (W - pad * 2);
     const y = pad + (1 - (p.v - min) / range) * (H - pad * 2);
-    return `${x.toFixed(1)},${y.toFixed(1)}`;
+    return { x: +x.toFixed(1), y: +y.toFixed(1), p };
   });
   const lastVal = vals[vals.length - 1];
   const color = lastVal >= 0 ? '#10b981' : '#ef4444';
-  const fillPoints = points.join(' ') + ` ${W - pad},${zeroY.toFixed(1)} ${pad},${zeroY.toFixed(1)}`;
+  const ptStr = points.map(p => `${p.x},${p.y}`).join(' ');
+  const fillPoints = ptStr + ` ${W - pad},${zeroY.toFixed(1)} ${pad},${zeroY.toFixed(1)}`;
   svg.innerHTML =
     `<line x1="${pad}" y1="${zeroY.toFixed(1)}" x2="${W-pad}" y2="${zeroY.toFixed(1)}" stroke="#1e2d4a" stroke-width="0.5" stroke-dasharray="2,3"/>` +
     `<polygon points="${fillPoints}" fill="${color}" opacity="0.08"/>` +
-    `<polyline points="${points.join(' ')}" fill="none" stroke="${color}" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"/>` +
-    `<circle cx="${points[points.length-1].split(',')[0]}" cy="${points[points.length-1].split(',')[1]}" r="2.5" fill="${color}"/>`;
+    `<polyline points="${ptStr}" fill="none" stroke="${color}" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"/>` +
+    `<circle class="pnl-dot" cx="${points[points.length-1].x}" cy="${points[points.length-1].y}" r="2.5" fill="${color}"/>` +
+    `<line class="crosshair pnl-cross" x1="0" y1="0" x2="0" y2="${H}" style="display:none"/>` +
+    `<circle class="hover-dot pnl-hover" cx="0" cy="0" r="3.5" fill="none" stroke="${color}" stroke-width="1.5" style="display:none"/>`;
+
+  // Tooltip interaction
+  setupSparklineTooltip(svg, 'pnl', points.map(p => ({ x: p.x, y: p.y, data: p.p })), W, H, pad);
 }
 
 function renderPosChart() {
@@ -835,16 +867,18 @@ function renderPosChart() {
   const openPts = posHistory.map((p, i) => {
     const x = pad + (i / (posHistory.length - 1)) * (W - pad * 2);
     const y = pad + (1 - p.open / maxVal) * (H - pad * 2);
-    return `${x.toFixed(1)},${y.toFixed(1)}`;
+    return { x: +x.toFixed(1), y: +y.toFixed(1), data: p };
   });
   const closedPts = posHistory.map((p, i) => {
     const x = pad + (i / (posHistory.length - 1)) * (W - pad * 2);
     const y = pad + (1 - p.closed / maxVal) * (H - pad * 2);
-    return `${x.toFixed(1)},${y.toFixed(1)}`;
+    return { x: +x.toFixed(1), y: +y.toFixed(1), data: p };
   });
 
-  const openFill = openPts.join(' ') + ` ${W - pad},${(H - pad).toFixed(1)} ${pad},${(H - pad).toFixed(1)}`;
-  const closedFill = closedPts.join(' ') + ` ${W - pad},${(H - pad).toFixed(1)} ${pad},${(H - pad).toFixed(1)}`;
+  const openStr = openPts.map(p => `${p.x},${p.y}`).join(' ');
+  const closedStr = closedPts.map(p => `${p.x},${p.y}`).join(' ');
+  const openFill = openStr + ` ${W - pad},${(H - pad).toFixed(1)} ${pad},${(H - pad).toFixed(1)}`;
+  const closedFill = closedStr + ` ${W - pad},${(H - pad).toFixed(1)} ${pad},${(H - pad).toFixed(1)}`;
 
   const lastOpen = opens[opens.length - 1];
   const lastClosed = closeds[closeds.length - 1];
@@ -853,11 +887,22 @@ function renderPosChart() {
 
   svg.innerHTML =
     `<polygon points="${closedFill}" fill="#6366f1" opacity="0.08"/>` +
-    `<polyline points="${closedPts.join(' ')}" fill="none" stroke="#6366f1" stroke-width="1.2" stroke-linecap="round" stroke-linejoin="round" opacity="0.6"/>` +
+    `<polyline points="${closedStr}" fill="none" stroke="#6366f1" stroke-width="1.2" stroke-linecap="round" stroke-linejoin="round" opacity="0.6"/>` +
     `<polygon points="${openFill}" fill="#f59e0b" opacity="0.08"/>` +
-    `<polyline points="${openPts.join(' ')}" fill="none" stroke="#f59e0b" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"/>` +
-    `<circle cx="${openPts[openPts.length-1].split(',')[0]}" cy="${openPts[openPts.length-1].split(',')[1]}" r="2.5" fill="#f59e0b"/>` +
-    `<circle cx="${closedPts[closedPts.length-1].split(',')[0]}" cy="${closedPts[closedPts.length-1].split(',')[1]}" r="2" fill="#6366f1"/>`;
+    `<polyline points="${openStr}" fill="none" stroke="#f59e0b" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"/>` +
+    `<circle class="pos-dot" cx="${openPts[openPts.length-1].x}" cy="${openPts[openPts.length-1].y}" r="2.5" fill="#f59e0b"/>` +
+    `<circle class="pos-dot-c" cx="${closedPts[closedPts.length-1].x}" cy="${closedPts[closedPts.length-1].y}" r="2" fill="#6366f1"/>` +
+    `<line class="crosshair pos-cross" x1="0" y1="0" x2="0" y2="${H}" style="display:none"/>` +
+    `<circle class="hover-dot pos-hover-open" cx="0" cy="0" r="3.5" fill="none" stroke="#f59e0b" stroke-width="1.5" style="display:none"/>` +
+    `<circle class="hover-dot pos-hover-closed" cx="0" cy="0" r="3" fill="none" stroke="#6366f1" stroke-width="1.5" style="display:none"/>`;
+
+  // Tooltip interaction — data points share the same index
+  const tooltipPts = openPts.map((p, i) => ({
+    x: p.x, y: p.y,
+    data: { open: posHistory[i].open, closed: posHistory[i].closed, t: posHistory[i].t },
+    y2: closedPts[i].y
+  }));
+  setupSparklineTooltip(svg, 'pos', tooltipPts, W, H, pad);
 }
 
 function renderRecon(rc) {
@@ -919,6 +964,80 @@ function renderRecon(rc) {
 fetchData();
 setInterval(fetchData, 5000);
 setInterval(updateUptime, 10000);
+
+// ── Sparkline Tooltip Engine ──
+function setupSparklineTooltip(svg, chartType, points, W, H, pad) {
+  const tooltip = document.getElementById('sparkTooltip');
+  const ttTime = document.getElementById('ttTime');
+  const ttBody = document.getElementById('ttBody');
+  function onMove(e) {
+    const rect = svg.getBoundingClientRect();
+    const mouseX = e.clientX - rect.left;
+    // Clamp to chart area
+    const chartX = Math.max(pad, Math.min(mouseX, W - pad));
+    // Map to nearest data index
+    const fraction = (chartX - pad) / (W - pad * 2);
+    const idx = Math.round(fraction * (points.length - 1));
+    if (idx < 0 || idx >= points.length) return;
+    const pt = points[idx];
+
+    // Update crosshair and hover dot
+    if (chartType === 'pnl') {
+      const cross = svg.querySelector('.pnl-cross');
+      const hover = svg.querySelector('.pnl-hover');
+      if (cross) { cross.setAttribute('x1', pt.x); cross.setAttribute('x2', pt.x); cross.style.display = ''; }
+      if (hover) { hover.setAttribute('cx', pt.x); hover.setAttribute('cy', pt.y); hover.style.display = ''; }
+      // Tooltip content
+      const val = pt.data.v;
+      const color = val >= 0 ? 'var(--green)' : 'var(--red)';
+      ttBody.innerHTML = `<span class="tt-val" style="color:${color}">${fmt$(val)}</span> <span class="tt-label">P&L</span>`;
+    } else {
+      const cross = svg.querySelector('.pos-cross');
+      const hoverOpen = svg.querySelector('.pos-hover-open');
+      const hoverClosed = svg.querySelector('.pos-hover-closed');
+      if (cross) { cross.setAttribute('x1', pt.x); cross.setAttribute('x2', pt.x); cross.style.display = ''; }
+      if (hoverOpen) { hoverOpen.setAttribute('cx', pt.x); hoverOpen.setAttribute('cy', pt.y); hoverOpen.style.display = ''; }
+      if (hoverClosed && pt.y2 != null) { hoverClosed.setAttribute('cx', pt.x); hoverClosed.setAttribute('cy', pt.y2); hoverClosed.style.display = ''; }
+      // Tooltip content
+      ttBody.innerHTML =
+        `<div><span class="tt-val" style="color:#f59e0b">${pt.data.open}</span> <span class="tt-label">open</span></div>` +
+        `<div><span class="tt-val" style="color:#6366f1">${pt.data.closed}</span> <span class="tt-label">closed</span></div>`;
+    }
+
+    // Timestamp
+    const dataTime = pt.data.t || null;
+    if (dataTime) {
+      const ago = Date.now() - dataTime;
+      ttTime.textContent = ago < 60000 ? 'just now' : fmtTime(ago) + ' ago';
+    }
+
+    // Position tooltip near cursor
+    const tipW = 140, tipH = 56;
+    let left = e.clientX + 14;
+    let top = e.clientY - tipH;
+    if (left + tipW > window.innerWidth - 16) left = e.clientX - tipW - 14;
+    if (top + tipH > window.innerHeight - 8) top = window.innerHeight - tipH - 8;
+    if (top < 8) top = 8;
+    tooltip.style.left = left + 'px';
+    tooltip.style.top = top + 'px';
+    tooltip.classList.add('visible');
+  }
+
+  function onLeave() {
+    tooltip.classList.remove('visible');
+    // Hide crosshair
+    svg.querySelectorAll('.crosshair, .hover-dot').forEach(el => el.style.display = 'none');
+  }
+
+  // Avoid duplicate listeners on re-render
+  svg._tooltipCleanup?.();
+  svg.addEventListener('mousemove', onMove);
+  svg.addEventListener('mouseleave', onLeave);
+  svg._tooltipCleanup = () => {
+    svg.removeEventListener('mousemove', onMove);
+    svg.removeEventListener('mouseleave', onLeave);
+  };
+}
 </script>
 </body>
 </html>
