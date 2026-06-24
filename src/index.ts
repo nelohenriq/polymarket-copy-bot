@@ -730,6 +730,26 @@ async function main(): Promise<void> {
     }
   }
 
+  // ── Notify: startup open positions (after catch-up, so list is accurate) ──
+  if (telegram && journal) {
+    const openPositions = journal.getOpenPositions();
+    if (openPositions.length > 0) {
+      const now = Date.now();
+      const lines = openPositions.map(pos => {
+        const ageMs = now - pos.timestamp;
+        const ageDays = (ageMs / 86_400_000).toFixed(1);
+        const ageLabel = ageMs > 86_400_000 ? `${ageDays}d`
+          : ageMs > 3_600_000 ? `${(ageMs / 3_600_000).toFixed(1)}h`
+          : `${(ageMs / 60_000).toFixed(0)}m`;
+        return `• ${pos.outcome.slice(0, 40)} | $${pos.entryPrice.toFixed(4)} | ${pos.size.toFixed(2)} sh | ${ageLabel} old`;
+      });
+      const exposure = openPositions.reduce((s, p) => s + p.entryPrice * p.size, 0);
+      const msg = `ℹ️ [INFO] Startup: ${openPositions.length} open position(s) ($${exposure.toFixed(2)} exposure)\n\n${lines.join('\n')}`;
+      log.info(`\n${msg}`);
+      telegram.notifyRisk({ type: 'blocked', message: msg, trade: '' });
+    }
+  }
+
   // ── Step 5e: CLOB stale order cleanup on startup ──
   // GTC orders persist across restarts. If we don't have a matching position,
   // the order is stale and could fill unexpectedly — cancel it.
