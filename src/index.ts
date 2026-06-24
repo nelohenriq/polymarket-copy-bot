@@ -290,28 +290,35 @@ async function main(): Promise<void> {
 
   // ── Persist journal to disk (for dry-run dashboard + state reconciliation) ──
   function persistJournal(): void {
-    if (!journal || !(config.dryRun || paperMode)) return;
     try {
-      // Legacy dashboard file (backwards compatible)
-      const data = {
+      // Dashboard JSON file — always write so dashboard works in all modes
+      const data: Record<string, unknown> = {
         lastUpdated: new Date().toISOString(),
         stats: { ...stats },
-        entries: journal.getEntries(),
-        openPositions: journal.getOpenPositions().map(e => ({ outcome: e.outcome, tokenId: e.tokenId, shares: e.size, entryPrice: e.entryPrice, title: e.title, trader: e.trader, slug: e.slug, volume24hr: e.volume24hr, category: e.category })),
       };
+      if (journal) {
+        data['entries'] = journal.getEntries();
+        data['openPositions'] = journal.getOpenPositions().map(e => ({ outcome: e.outcome, tokenId: e.tokenId, shares: e.size, entryPrice: e.entryPrice, title: e.title, trader: e.trader, slug: e.slug, volume24hr: e.volume24hr, category: e.category }));
+      } else {
+        data['entries'] = [];
+        data['openPositions'] = [];
+      }
       fs.writeFileSync(dashboardPath, JSON.stringify(data, null, 2), 'utf-8');
 
-      // Full state file (for position reconciliation across restarts)
-      saveState(
-        statePath,
-        journal.getEntries(),
-        positions.getAllPositions(),
-        lastProcessedTimestamps,
-        riskManager.getState(),
-        stats,
-        journal.getCounter(),
-      );
-      reconciliation.lastStateSave = new Date().toISOString();
+      // Full state file — only save when journal exists to avoid overwriting
+      // loaded state with empty entries in LIVE mode (where journal is null)
+      if (journal) {
+        saveState(
+          statePath,
+          journal.getEntries(),
+          positions.getAllPositions(),
+          lastProcessedTimestamps,
+          riskManager.getState(),
+          stats,
+          journal.getCounter(),
+        );
+        reconciliation.lastStateSave = new Date().toISOString();
+      }
     } catch {
       // Silently ignore — dashboard is non-critical
     }
@@ -417,9 +424,7 @@ async function main(): Promise<void> {
       } else if (paperMode) {
         log.info(`[PAPER] Exit recorded: ${trade.outcome} @ $${trade.price}`);
       }
-      if (config.dryRun || paperMode) {
-        persistJournal();
-      }
+      persistJournal();
 
       // If in profit monitoring mode and all positions are closed, shut down gracefully
       if (profitTargetMonitoring && journal.getOpenPositions().length === 0) {
@@ -526,9 +531,7 @@ async function main(): Promise<void> {
           // Record in trade journal
           if (journal) {
             journal.recordEntry(trade, result.copyNotional, result.price, paperMode ? 'copy-trade' : 'dry-run');
-            if (config.dryRun) {
-              persistJournal();
-            }
+            persistJournal();
           }
 
           telegram?.notifyExecution({ side: result.side, shares: result.copyShares, price: result.price, notional: result.copyNotional, orderId: result.orderId ?? '', outcome: trade.outcome });
@@ -757,10 +760,11 @@ async function main(): Promise<void> {
         log.info(`   Catch-up complete: no missed exits found, ${openAfter} positions still open`);
       }
 
-      // Persist updated state after catch-up
-      persistJournal();
     }
   }
+
+  // Persist state + dashboard after catch-up (runs in all modes)
+  persistJournal();
 
   // ── Notify: startup open positions (after catch-up, so list is accurate) ──
   if (telegram && journal) {
@@ -949,21 +953,20 @@ async function main(): Promise<void> {
   }
   log.info('Press Ctrl+C to stop\n');
 
-  // ── Step 6b: Start dashboard HTTP server (dry-run mode) ──
+  // ── Step 6b: Start dashboard HTTP server (all modes) ──
   let dashboardServer: http.Server | null = null;
-  if (config.dryRun || paperMode) {
-    const DASHBOARD_PORT = 3456;
-    dashboardServer = http.createServer((req, res) => {
-      const reqPath = req.url?.split('?')[0] || '/';
-      if (reqPath === '/dry-run-trades.json') {
-        res.writeHead(200, { 'Content-Type': 'application/json', 'Access-Control-Allow-Origin': '*' });
-        // Always return live stats from memory (up-to-date even if file hasn't been written yet)
-        // Build title lookup from journal entries for position enrichment
-        const journalEntries = journal ? journal.getEntries() : [];
-        const titleByToken = new Map<string, string>();
-        for (const e of journalEntries) {
-          if (e.title && e.tokenId) titleByToken.set(e.tokenId, e.title);
-        }
+  const DASHBOARD_PORT = 3456;
+  dashboardServer = http.createServer((req, res) => {
+    const reqPath = req.url?.split('?')[0] || '/';
+    if (reqPath === '/dry-run-trades.json') {
+      res.writeHead(200, { 'Content-Type': 'application/json', 'Access-Control-Allow-Origin': '*', 'Cache-Control': 'no-cache, no-store, must-revalidate' });
+      // Always return live stats from memory (up-to-date even if file hasn't been written yet)
+      // Build title lookup from journal entries for position enrichment
+      const journalEntries = journal ? journal.getEntries() : [];
+      const titleByToken = new Map<string, string>();
+      for (const e of journalEntries) {
+        if (e.title && e.tokenId) titleByToken.set(e.tokenId, e.title);
+      }
         // Per-trader aggregation with enriched details
         const traderMap = new Map<string, {
           trades: number; volume: number; pnl: number; wins: number; losses: number;
@@ -1079,22 +1082,18 @@ async function main(): Promise<void> {
         res.end('Not found');
       }
     });
-    dashboardServer.listen(DASHBOARD_PORT, () => {
-      log.success(`📊 Dashboard: http://localhost:${DASHBOARD_PORT}`);
-    });
-    dashboardServer.on('error', (err: NodeJS.ErrnoException) => {
-      if (err.code === 'EADDRINUSE') {
-        log.warn(`Dashboard port ${DASHBOARD_PORT} in use — dashboard unavailable`);
-      }
-    });
-  }
+  dashboardServer.listen(DASHBOARD_PORT, () => {
+    log.success(`📊 Dashboard: http://localhost:${DASHBOARD_PORT}`);
+  });
+  dashboardServer.on('error', (err: NodeJS.ErrnoException) => {
+    if (err.code === 'EADDRINUSE') {
+      log.warn(`Dashboard port ${DASHBOARD_PORT} in use — dashboard unavailable`);
+    }
+  });
 
-  // ── Periodic journal persistence (keeps dashboard data fresh) ──
-  let persistInterval: ReturnType<typeof setInterval> | null = null;
-  if ((config.dryRun || paperMode) && journal) {
-    persistInterval = setInterval(() => { persistJournal(); }, 30_000); // Every 30 seconds
-    persistJournal(); // Write initial file so dashboard loads immediately
-  }
+  // ── Periodic journal persistence (keeps dashboard + state fresh) ──
+  const persistInterval: ReturnType<typeof setInterval> = setInterval(() => { persistJournal(); }, 30_000); // Every 30 seconds
+  persistJournal(); // Write initial file so dashboard loads immediately
 
   // ── Step 7: Periodic status reports ──
   const statusInterval = setInterval(() => {
@@ -1119,7 +1118,7 @@ async function main(): Promise<void> {
     if (intelligence) intelligence.stop();
     clearInterval(statusInterval);
     clearInterval(staleCheckInterval);
-    if (persistInterval) clearInterval(persistInterval);
+    clearInterval(persistInterval);
     if (marketRefreshInterval) clearInterval(marketRefreshInterval);
     printFinalReport();
 
@@ -1157,9 +1156,9 @@ async function main(): Promise<void> {
       }
     }
 
-    // Dry-run mode: persist final journal and print summary
+    // Persist final state and dashboard data (all modes)
+    persistJournal();
     if ((config.dryRun || paperMode) && journal) {
-      persistJournal();
       const entries = journal.getEntries();
       if (entries.length > 0) {
         const closedTrades = journal.getClosedTrades();
