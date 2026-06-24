@@ -242,7 +242,7 @@ async function main(): Promise<void> {
 
   // ── Persist journal to disk (for dry-run dashboard) ──
   function persistJournal(): void {
-    if (!journal || !config.dryRun) return;
+    if (!journal || !(config.dryRun || paperMode)) return;
     try {
       const data = {
         lastUpdated: new Date().toISOString(),
@@ -266,7 +266,7 @@ async function main(): Promise<void> {
       if (paperMode) {
         log.info(`[PAPER] Exit recorded: ${trade.outcome} @ $${trade.price}`);
       }
-      if (config.dryRun && !paperMode) {
+      if (config.dryRun || paperMode) {
         persistJournal();
       }
     }
@@ -461,7 +461,7 @@ async function main(): Promise<void> {
 
   // ── Step 6b: Start dashboard HTTP server (dry-run mode) ──
   let dashboardServer: http.Server | null = null;
-  if (config.dryRun && !paperMode) {
+  if (config.dryRun || paperMode) {
     const DASHBOARD_PORT = 3456;
     dashboardServer = http.createServer((req, res) => {
       const reqPath = req.url?.split('?')[0] || '/';
@@ -506,7 +506,7 @@ async function main(): Promise<void> {
 
   // ── Periodic journal persistence (keeps dashboard data fresh) ──
   let persistInterval: ReturnType<typeof setInterval> | null = null;
-  if (config.dryRun && !paperMode && journal) {
+  if ((config.dryRun || paperMode) && journal) {
     persistInterval = setInterval(() => { persistJournal(); }, 30_000); // Every 30 seconds
     persistJournal(); // Write initial file so dashboard loads immediately
   }
@@ -572,7 +572,7 @@ async function main(): Promise<void> {
     }
 
     // Dry-run mode: persist final journal and print summary
-    if (config.dryRun && !paperMode && journal) {
+    if ((config.dryRun || paperMode) && journal) {
       persistJournal();
       const entries = journal.getEntries();
       if (entries.length > 0) {
