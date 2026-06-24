@@ -844,6 +844,12 @@ function renderRecon(rc) {
   if (rc.stalePositionCount > 0) {
     h += `<div class="recon-item"><span class="rl">Stale Positions</span><span class="rv c-yellow">${rc.stalePositionCount} ⚠</span></div>`;
   }
+  if (rc.openOrdersChecked > 0 || rc.staleOrdersCanceled > 0) {
+    h += `<div class="recon-item"><span class="rl">CLOB Orders</span><span class="rv">${rc.openOrdersChecked} checked</span></div>`;
+    if (rc.staleOrdersCanceled > 0) {
+      h += `<div class="recon-item"><span class="rl">Stale Canceled</span><span class="rv c-green">${rc.staleOrdersCanceled} ✓</span></div>`;
+    }
+  }
   h += '</div>';
 
   // Status alerts

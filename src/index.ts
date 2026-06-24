@@ -321,6 +321,8 @@ async function main(): Promise<void> {
     catchUpDeviationBlocks: 0,
     stalePositionCount: 0,
     stalePositions: [] as string[],
+    openOrdersChecked: 0,
+    staleOrdersCanceled: 0,
     mode: 'normal' as 'normal' | 'exit-only' | 'profit-shutdown',
   };
 
@@ -685,7 +687,73 @@ async function main(): Promise<void> {
     }
   }
 
-  // ── Step 5e: Stale position monitoring (periodic) ──
+  // ── Step 5e: CLOB stale order cleanup on startup ──
+  // GTC orders persist across restarts. If we don't have a matching position,
+  // the order is stale and could fill unexpectedly — cancel it.
+  if (clob && !config.dryRun) {
+    try {
+      const openOrders = await clob.getOpenOrders();
+      const orders = Array.isArray(openOrders) ? openOrders : (openOrders as Record<string, unknown>).data as unknown[] || [];
+      if (orders.length > 0) {
+        const openTokenIds = new Set(positions.getAllPositions().filter(p => p.shares > 0).map(p => p.tokenId));
+        const openJournalTokenIds = journal ? new Set(journal.getOpenPositions().map(e => e.tokenId)) : new Set<string>();
+        const staleOrders: string[] = [];
+
+        for (const order of orders) {
+          const o = order as Record<string, unknown>;
+          const tokenId = (o.asset_id as string) || (o.tokenID as string) || (o.tokenId as string) || '';
+          const orderId = (o.id as string) || (o.orderID as string) || (o.orderId as string) || '';
+          const orderSize = typeof o.original_size === 'number' ? o.original_size : typeof o.size === 'number' ? o.size : 0;
+
+          if (!tokenId || !orderId) continue;
+
+          // An order is stale if its token has no matching position or journal entry
+          const hasPosition = openTokenIds.has(tokenId);
+          const hasJournalEntry = openJournalTokenIds.has(tokenId);
+
+          if (!hasPosition && !hasJournalEntry) {
+            staleOrders.push(orderId);
+            log.warn(`Stale CLOB order found: ${orderId.slice(0, 12)}… token=${tokenId.slice(0, 12)}… size=${orderSize}`);
+          }
+        }
+
+        if (staleOrders.length > 0) {
+          log.info(`Canceling ${staleOrders.length} stale CLOB order(s)...`);
+          try {
+            if (staleOrders.length === 1) {
+              await clob.cancelOrder({ orderID: staleOrders[0] });
+            } else {
+              await clob.cancelOrders(staleOrders);
+            }
+            log.success(`Canceled ${staleOrders.length} stale CLOB order(s)`);
+            reconciliation.staleOrdersCanceled = staleOrders.length;
+          } catch (cancelErr) {
+            const cancelMsg = cancelErr instanceof Error ? cancelErr.message : String(cancelErr);
+            log.error(`Failed to cancel stale orders: ${cancelMsg}`);
+            // Fallback: cancel all orders if batch cancel fails
+            try {
+              await clob.cancelAll();
+              log.warn('Used cancelAll as fallback — all open orders canceled');
+              reconciliation.staleOrdersCanceled = staleOrders.length;
+            } catch (cancelAllErr) {
+              const cancelAllMsg = cancelAllErr instanceof Error ? cancelAllErr.message : String(cancelAllErr);
+              log.error(`cancelAll fallback also failed: ${cancelAllMsg}`);
+            }
+          }
+        } else {
+          log.info(`CLOB order check: ${orders.length} open order(s), all have matching positions — no stale orders`);
+        }
+        reconciliation.openOrdersChecked = orders.length;
+      } else {
+        log.info('No open CLOB orders found on startup');
+      }
+    } catch (orderErr) {
+      const orderMsg = orderErr instanceof Error ? orderErr.message : String(orderErr);
+      log.warn(`Could not check CLOB orders on startup: ${orderMsg} (continuing without cleanup)`);
+    }
+  }
+
+  // ── Step 5f: Stale position monitoring (periodic) ──
   const staleWarnMs = (config.stalePositionWarnDays ?? 30) * 24 * 60 * 60 * 1000;
   const staleAlerted = new Set<string>(); // tokenId -> already alerted (avoid spam)
   const staleCheckInterval = setInterval(() => {
