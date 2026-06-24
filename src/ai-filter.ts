@@ -100,7 +100,9 @@ interface LLMResponse {
 function getApiUrl(provider: string, baseUrl?: string): string {
   // Custom provider: use base URL directly (assumes OpenAI-compatible /v1/chat/completions)
   if (provider === 'custom' && baseUrl) {
-    const trimmed = baseUrl.replace(/\/$/, '');
+    let trimmed = baseUrl.replace(/\/$/, '');
+    // Strip trailing /v1 to avoid double path: baseUrl/v1/v1/chat/completions
+    if (trimmed.endsWith('/v1')) trimmed = trimmed.slice(0, -3);
     return trimmed.endsWith('/v1/chat/completions') ? trimmed : `${trimmed}/v1/chat/completions`;
   }
   if (provider === 'openai') return 'https://api.openai.com/v1/chat/completions';
