@@ -108,6 +108,34 @@ export class TradeJournal {
   }
 
   /**
+   * Get the current entry counter (for state persistence continuity).
+   */
+  getCounter(): number {
+    return this.counter;
+  }
+
+  /**
+   * Load entries from persisted state (for restart recovery).
+   * Restores both the full entries array and the openPositions map.
+   * @param entries - Previously saved journal entries
+   * @param counter - The entry counter at save time (for ID continuity)
+   */
+  loadFromEntries(entries: TradeJournalEntry[], counter?: number): void {
+    this.entries = entries;
+    this.counter = counter ?? entries.length;
+
+    // Rebuild openPositions from entries that have no exit
+    this.openPositions.clear();
+    for (const e of this.entries) {
+      if (e.exitPrice === undefined && e.side === 'BUY') {
+        this.openPositions.set(e.tokenId, e);
+      }
+    }
+
+    log.info(`Journal restored: ${entries.length} entries, ${this.openPositions.size} open positions`);
+  }
+
+  /**
    * Export journal to JSON.
    */
   toJSON(): string {

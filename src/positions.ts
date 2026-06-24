@@ -95,6 +95,19 @@ export class PositionTracker {
   }
 
   /**
+   * Load positions from persisted state (for restart recovery).
+   */
+  loadPositions(positions: Position[]): void {
+    this.positions.clear();
+    for (const p of positions) {
+      if (p.shares > 0) {
+        this.positions.set(p.tokenId, p);
+      }
+    }
+    log.info(`Position tracker restored: ${this.positions.size} open positions`);
+  }
+
+  /**
    * Print a summary of all positions.
    */
   printSummary(): void {

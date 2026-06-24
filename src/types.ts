@@ -55,6 +55,12 @@ export interface BotConfig {
   finfeedApiKey?: string;
   /** Enable Bullpen.fi integration for smart money, market data, and fallback execution */
   bullpenEnabled?: boolean;
+  /** Max price deviation from entry before halting missed-sell execution (0.15 = 15%) */
+  maxMissedSellDeviation?: number;
+  /** Days before a position is considered stale and triggers a warning */
+  stalePositionWarnDays?: number;
+  /** Path to the bot state file for position persistence across restarts */
+  stateFilePath?: string;
 }
 
 export type CopyOrderType = 'FOK' | 'GTC' | 'FAK';

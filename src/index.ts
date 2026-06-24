@@ -48,6 +48,7 @@ import { TelegramNotifier } from './telegram';
 import { MarketIntelligence, formatIntelligenceForPrompt } from './intelligence';
 import { log, setLogLevel } from './logger';
 import { ParsedTrade, SessionStats, BotConfig, PaperTradingConfig } from './types';
+import { loadState, saveState, getStatePath } from './state';
 import { calculateCopySize, calculateSimulatedFillPrice } from './sizing';
 import * as fs from 'fs';
 import * as dns from 'dns';
@@ -227,6 +228,44 @@ async function main(): Promise<void> {
   const startingCapital = paperMode ? paperConfig!.startingCapital : 0;
   const dashboardPath = 'dry-run-trades.json';
 
+  // ── Load persisted state (position reconciliation across restarts) ──
+  const lastProcessedTimestamps = new Map<string, number>();
+  const statePath = config.stateFilePath || getStatePath();
+  let savedState = loadState(statePath);
+  if (savedState) {
+    const openCount = savedState.entries.filter(e => e.exitPrice === undefined && e.side === 'BUY').length;
+    const closedCount = savedState.entries.filter(e => e.exitPrice !== undefined).length;
+    log.success(`State restored from ${statePath}: ${savedState.entries.length} entries (${openCount} open, ${closedCount} closed)`);
+
+    // Restore journal entries
+    if (journal && savedState.entries.length > 0) {
+      journal.loadFromEntries(savedState.entries, savedState.counter);
+    }
+
+    // Restore position tracker
+    if (savedState.positions.length > 0) {
+      positions.loadPositions(savedState.positions);
+    }
+
+    // Restore per-wallet timestamps for catch-up replay
+    for (const [wallet, ts] of Object.entries(savedState.lastProcessedTimestamps)) {
+      lastProcessedTimestamps.set(wallet, ts);
+    }
+
+    // Restore risk manager state
+    if (savedState.riskState) {
+      Object.assign(riskManager.getState(), savedState.riskState);
+    }
+
+    // Restore session stats
+    if (savedState.sessionStats) {
+      Object.assign(stats, savedState.sessionStats);
+      stats.startTime = Date.now(); // Keep fresh uptime
+    }
+  } else {
+    log.info('No persisted state found — starting fresh');
+  }
+
   // Initialize Telegram notifier (skip for paper trading unless explicitly configured)
   let telegram: TelegramNotifier | null = null;
   const tgToken = config.telegramBotToken;
@@ -240,10 +279,11 @@ async function main(): Promise<void> {
     await telegram.connect();
   }
 
-  // ── Persist journal to disk (for dry-run dashboard) ──
+  // ── Persist journal to disk (for dry-run dashboard + state reconciliation) ──
   function persistJournal(): void {
     if (!journal || !(config.dryRun || paperMode)) return;
     try {
+      // Legacy dashboard file (backwards compatible)
       const data = {
         lastUpdated: new Date().toISOString(),
         stats: { ...stats },
@@ -251,6 +291,17 @@ async function main(): Promise<void> {
         openPositions: journal.getOpenPositions().map(e => ({ outcome: e.outcome, tokenId: e.tokenId, shares: e.size, entryPrice: e.entryPrice, title: e.title, trader: e.trader, slug: e.slug, volume24hr: e.volume24hr, category: e.category })),
       };
       fs.writeFileSync(dashboardPath, JSON.stringify(data, null, 2), 'utf-8');
+
+      // Full state file (for position reconciliation across restarts)
+      saveState(
+        statePath,
+        journal.getEntries(),
+        positions.getAllPositions(),
+        lastProcessedTimestamps,
+        riskManager.getState(),
+        stats,
+        journal.getCounter(),
+      );
     } catch {
       // Silently ignore — dashboard is non-critical
     }
@@ -285,6 +336,11 @@ async function main(): Promise<void> {
       if (config.dryRun || paperMode) {
         persistJournal();
       }
+    }
+
+    // Track per-wallet timestamp for catch-up replay on restart
+    if (trade.user) {
+      lastProcessedTimestamps.set(trade.user, Math.max(lastProcessedTimestamps.get(trade.user) || 0, trade.timestamp));
     }
 
     // Skip SELL trades for execution (BUY-only mode — exits are recorded above via recordExit)
@@ -462,6 +518,142 @@ async function main(): Promise<void> {
     });
   }
 
+  // ── Step 5d: Catch-up replay — process missed trades since last state ──
+  if (savedState && journal && lastProcessedTimestamps.size > 0) {
+    const openBefore = journal.getOpenPositions().length;
+    if (openBefore > 0) {
+      log.info(`\n🔄 Catch-up replay: checking ${config.targetWallets.length} wallet(s) for missed trades...`);
+      log.info(`   Open positions to reconcile: ${openBefore}`);
+
+      let missedSells = 0;
+      let priceDeviationBlocks = 0;
+      const maxDeviation = config.maxMissedSellDeviation ?? 0.15;
+
+      for (const wallet of config.targetWallets) {
+        const lastTs = lastProcessedTimestamps.get(wallet) || 0;
+        if (lastTs === 0) continue;
+
+        try {
+          const { proxyFetch } = await import('./proxy');
+          const sinceSec = Math.floor(lastTs / 1000);
+          const params = new URLSearchParams({
+            user: wallet,
+            type: 'TRADE',
+            limit: '100',
+            sortBy: 'TIMESTAMP',
+            sortDirection: 'ASC',
+          });
+          const url = `https://data-api.polymarket.com/activity?${params.toString()}`;
+          const resp = await proxyFetch(url, {
+            headers: { Accept: 'application/json' },
+            signal: AbortSignal.timeout(15_000),
+          });
+
+          if (!resp.ok) {
+            log.warn(`Catch-up failed for ${wallet.slice(0, 8)}...: HTTP ${resp.status}`);
+            continue;
+          }
+
+          const trades = (await resp.json()) as import('./types').DataApiTrade[];
+          if (!Array.isArray(trades)) continue;
+
+          for (const raw of trades) {
+            const tradeTs = typeof raw.timestamp === 'number' ? raw.timestamp * 1000 : new Date(raw.timestamp).getTime();
+            if (tradeTs <= lastTs) continue; // Already processed
+
+            if (raw.side === 'SELL' && journal) {
+              const openPos = journal.findOpenPosition(raw.asset);
+              if (openPos) {
+                const exitPrice = typeof raw.price === 'number' ? raw.price : parseFloat(String(raw.price));
+                const entryPrice = openPos.entryPrice;
+
+                // Price deviation guard: check if market moved too much during downtime
+                if (entryPrice > 0 && exitPrice > 0) {
+                  const deviation = Math.abs(exitPrice - entryPrice) / entryPrice;
+                  if (deviation > maxDeviation) {
+                    priceDeviationBlocks++;
+                    log.risk(
+                      `⚠️  PRICE DEVIATION BLOCKED: ${openPos.outcome.slice(0, 30)} | ` +
+                      `Entry: $${entryPrice.toFixed(4)} → Target exit: $${exitPrice.toFixed(4)} | ` +
+                      `Deviation: ${(deviation * 100).toFixed(1)}% > max ${(maxDeviation * 100).toFixed(0)}%`
+                    );
+                    telegram?.notifyRisk({
+                      type: 'halt',
+                      message: `Price deviation blocked auto-close: ${openPos.outcome.slice(0, 50)}\nEntry: $${entryPrice.toFixed(4)} → Exit: $${exitPrice.toFixed(4)} (${(deviation * 100).toFixed(1)}% deviation)\nManual review required.`,
+                      trade: openPos.outcome,
+                    });
+                    continue; // Skip this SELL — requires manual intervention
+                  }
+                }
+
+                // Safe to close — price deviation within bounds
+                journal.recordExit(raw.asset, exitPrice, tradeTs);
+                missedSells++;
+                const exitPnl = openPos.pnl ?? 0;
+                const emoji = exitPnl >= 0 ? '✅' : '❌';
+                log.info(
+                  `${emoji} [CATCH-UP EXIT] ${openPos.outcome.slice(0, 30)} | ` +
+                  `P&L: $${exitPnl.toFixed(2)} | Exit: $${exitPrice.toFixed(4)}`
+                );
+                telegram?.notifyTrade({
+                  side: 'SELL',
+                  size: openPos.size,
+                  price: exitPrice,
+                  outcome: openPos.outcome,
+                  user: openPos.trader || 'unknown',
+                });
+              }
+            }
+          }
+
+          // Update lastProcessedTimestamp for this wallet
+          const latestTs = trades.length > 0
+            ? (typeof trades[trades.length - 1].timestamp === 'number'
+              ? trades[trades.length - 1].timestamp * 1000
+              : new Date(trades[trades.length - 1].timestamp).getTime())
+            : lastTs;
+          lastProcessedTimestamps.set(wallet, Math.max(lastTs, latestTs));
+
+        } catch (err) {
+          const msg = err instanceof Error ? err.message : String(err);
+          log.warn(`Catch-up error for ${wallet.slice(0, 8)}...: ${msg}`);
+        }
+      }
+
+      const openAfter = journal.getOpenPositions().length;
+      if (missedSells > 0 || priceDeviationBlocks > 0) {
+        log.info(`   Catch-up complete: ${missedSells} missed exits processed, ${priceDeviationBlocks} blocked (price deviation), ${openAfter} positions still open`);
+      } else {
+        log.info(`   Catch-up complete: no missed exits found, ${openAfter} positions still open`);
+      }
+
+      // Persist updated state after catch-up
+      persistJournal();
+    }
+  }
+
+  // ── Step 5e: Stale position monitoring (periodic) ──
+  const staleWarnMs = (config.stalePositionWarnDays ?? 30) * 24 * 60 * 60 * 1000;
+  const staleAlerted = new Set<string>(); // tokenId -> already alerted (avoid spam)
+  const staleCheckInterval = setInterval(() => {
+    if (!journal) return;
+    const now = Date.now();
+    const openPositions = journal.getOpenPositions();
+    for (const pos of openPositions) {
+      const holdMs = now - pos.timestamp;
+      if (holdMs > staleWarnMs && !staleAlerted.has(pos.tokenId)) {
+        staleAlerted.add(pos.tokenId);
+        const holdDays = (holdMs / 86_400_000).toFixed(1);
+        log.warn(`⏰ STALE POSITION: ${pos.outcome.slice(0, 30)} held for ${holdDays} days (entry: $${pos.entryPrice.toFixed(4)})`);
+        telegram?.notifyRisk({
+          type: 'halt',
+          message: `⏰ Stale position held ${holdDays} days: ${pos.outcome.slice(0, 50)}\nEntry: $${pos.entryPrice.toFixed(4)} | Size: ${pos.size.toFixed(2)} shares\nConsider closing manually.`,
+          trade: pos.outcome,
+        });
+      }
+    }
+  }, 3_600_000); // Check every hour
+
   // ── Step 6: Start trade monitor ──
   const monitor = new TradeMonitor(config, handleNewTrade);
   await monitor.start();
@@ -619,6 +811,7 @@ async function main(): Promise<void> {
     if (onchainMonitor) onchainMonitor.stop();
     if (intelligence) intelligence.stop();
     clearInterval(statusInterval);
+    clearInterval(staleCheckInterval);
     if (persistInterval) clearInterval(persistInterval);
     if (marketRefreshInterval) clearInterval(marketRefreshInterval);
     printFinalReport();
