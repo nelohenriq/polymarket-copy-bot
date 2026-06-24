@@ -23,9 +23,7 @@
     font-family: -apple-system, BlinkMacSystemFont, 'Inter', 'Segoe UI', system-ui, sans-serif;
     font-size: 14px; line-height: 1.5; min-height: 100vh;
   }
-
-  /* ── Layout ── */
-  .app { max-width: 1400px; margin: 0 auto; padding: 24px 32px 60px; }
+  .app { max-width: 1440px; margin: 0 auto; padding: 24px 32px 60px; }
   @media (max-width: 768px) { .app { padding: 16px; } }
 
   /* ── Header ── */
@@ -36,23 +34,26 @@
   .header-left h1 {
     font-size: 22px; font-weight: 700; letter-spacing: -0.5px;
     background: linear-gradient(135deg, var(--accent), var(--cyan));
-    -webkit-background-clip: text; -webkit-text-fill-color: transparent;
-    background-clip: text;
+    -webkit-background-clip: text; -webkit-text-fill-color: transparent; background-clip: text;
   }
   .header-left .sub {
     font-size: 12px; color: var(--muted); margin-top: 2px;
-    display: flex; align-items: center; gap: 6px;
+    display: flex; align-items: center; gap: 8px; flex-wrap: wrap;
   }
   .live-dot {
     width: 7px; height: 7px; border-radius: 50%; background: var(--green);
     animation: pulse 2s ease-in-out infinite; display: inline-block;
   }
   @keyframes pulse { 0%,100%{opacity:1;transform:scale(1)} 50%{opacity:.4;transform:scale(.8)} }
-  .header-right { display: flex; gap: 8px; align-items: center; }
+  .uptime-pill {
+    background: var(--bg3); border: 1px solid var(--border); border-radius: 20px;
+    padding: 4px 12px; font-size: 11px; font-weight: 600; color: var(--cyan);
+    font-variant-numeric: tabular-nums;
+  }
 
   /* ── Stat Pills ── */
   .stats-row {
-    display: grid; grid-template-columns: repeat(auto-fill, minmax(150px, 1fr));
+    display: grid; grid-template-columns: repeat(auto-fill, minmax(140px, 1fr));
     gap: 10px; margin-bottom: 24px;
   }
   .pill {
@@ -62,8 +63,7 @@
   }
   .pill::before {
     content: ''; position: absolute; top: 0; left: 0; right: 0; height: 2px;
-    background: var(--pill-color, var(--accent)); opacity: 0;
-    transition: opacity 0.2s;
+    background: var(--pill-color, var(--accent)); opacity: 0; transition: opacity 0.2s;
   }
   .pill:hover { border-color: var(--border-light); transform: translateY(-1px); }
   .pill:hover::before { opacity: 1; }
@@ -71,11 +71,11 @@
   .pill-value { font-size: 22px; font-weight: 700; margin-top: 4px; letter-spacing: -0.5px; }
   .pill-sub { font-size: 11px; color: var(--muted); margin-top: 2px; }
 
-  /* ── Panels ── */
-  .panels {
+  /* ── Main Layout: Risk + Traders + Journal ── */
+  .main-grid {
     display: grid; grid-template-columns: 1fr 320px; gap: 16px; margin-bottom: 28px;
   }
-  @media (max-width: 900px) { .panels { grid-template-columns: 1fr; } }
+  @media (max-width: 960px) { .main-grid { grid-template-columns: 1fr; } }
   .panel {
     background: var(--bg2); border: 1px solid var(--border);
     border-radius: 14px; overflow: hidden;
@@ -87,6 +87,7 @@
   }
   .panel-head .icon { font-size: 15px; }
   .panel-body { padding: 14px 18px; }
+  .panel-body.no-pad { padding: 0; }
 
   /* ── Risk Bars ── */
   .risk-item { margin-bottom: 14px; }
@@ -101,17 +102,23 @@
   .bar-fill.blue { background: linear-gradient(90deg, #2563eb, var(--blue)); }
   .bar-fill.yellow { background: linear-gradient(90deg, #d97706, var(--yellow)); }
 
-  /* ── Positions List ── */
-  .pos-item {
-    padding: 10px 0; border-bottom: 1px solid var(--border);
+  /* ── Trader List ── */
+  .trader-item {
+    padding: 10px 18px; border-bottom: 1px solid var(--border);
     display: flex; justify-content: space-between; align-items: center;
   }
-  .pos-item:last-child { border-bottom: none; }
-  .pos-name { font-size: 13px; font-weight: 500; }
-  .pos-market { font-size: 11px; color: var(--muted); margin-top: 1px; }
-  .pos-stats { text-align: right; font-size: 12px; }
-  .pos-stats .notional { color: var(--cyan); font-weight: 600; }
-  .pos-stats .meta { color: var(--muted); font-size: 11px; }
+  .trader-item:last-child { border-bottom: none; }
+  .trader-addr { font-size: 12px; font-weight: 600; color: var(--cyan); font-family: 'SF Mono', 'Fira Code', monospace; }
+  .trader-stats { text-align: right; font-size: 11px; }
+  .trader-stats .trades { color: var(--text); font-weight: 600; }
+  .trader-stats .meta { color: var(--muted); margin-top: 1px; }
+  .trader-stats .wr { font-weight: 600; }
+  .trader-stats .wr.pos { color: var(--green); }
+  .trader-stats .wr.neg { color: var(--red); }
+  .trader-stats .wr.neutral { color: var(--muted); }
+
+  /* ── Sidebar stacking ── */
+  .sidebar { display: flex; flex-direction: column; gap: 16px; }
 
   /* ── Trade Section ── */
   .section-bar {
@@ -130,8 +137,7 @@
   .search-input {
     background: var(--bg3); border: 1px solid var(--border);
     color: var(--text); padding: 7px 14px; border-radius: 8px;
-    font-size: 12px; font-family: inherit; width: 260px;
-    transition: border-color 0.2s;
+    font-size: 12px; font-family: inherit; width: 260px; transition: border-color 0.2s;
   }
   .search-input:focus { outline: none; border-color: var(--accent); }
   .search-input::placeholder { color: var(--muted2); }
@@ -147,23 +153,28 @@
   .card.expanded { border-color: var(--accent); box-shadow: 0 4px 24px rgba(99,102,241,0.1); }
   .card-main {
     padding: 14px 18px; display: grid;
-    grid-template-columns: 52px 1fr auto auto auto;
-    gap: 12px; align-items: center;
+    grid-template-columns: 48px 1fr auto auto auto;
+    gap: 14px; align-items: center;
   }
   @media (max-width: 700px) {
     .card-main { grid-template-columns: 1fr 1fr; gap: 8px; }
-    .card-side { grid-row: 1; }
-    .card-market { grid-row: 1; grid-column: 2; }
   }
   .card-side {
     display: flex; align-items: center; justify-content: center;
-    width: 48px; height: 32px; border-radius: 6px; font-size: 12px; font-weight: 700;
+    width: 44px; height: 30px; border-radius: 6px; font-size: 11px; font-weight: 700;
     text-transform: uppercase; letter-spacing: 0.5px;
   }
   .card-side.buy { background: var(--green-bg); color: var(--green); border: 1px solid rgba(16,185,129,0.2); }
   .card-side.sell { background: var(--red-bg); color: var(--red); border: 1px solid rgba(239,68,68,0.2); }
   .card-market .outcome { font-size: 14px; font-weight: 600; line-height: 1.3; }
-  .card-market .market-name { font-size: 11px; color: var(--muted); margin-top: 2px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; max-width: 300px; }
+  .card-market .market-name {
+    font-size: 11px; color: var(--muted); margin-top: 2px;
+    overflow: hidden; text-overflow: ellipsis; white-space: nowrap; max-width: 400px;
+  }
+  .card-market .market-link {
+    font-size: 10px; color: var(--accent); margin-top: 2px; text-decoration: none; opacity: 0.7;
+  }
+  .card-market .market-link:hover { opacity: 1; text-decoration: underline; }
   .card-price { text-align: right; }
   .card-price .val { font-size: 15px; font-weight: 700; font-variant-numeric: tabular-nums; }
   .card-price .lbl { font-size: 10px; color: var(--muted); text-transform: uppercase; letter-spacing: 0.5px; }
@@ -180,22 +191,33 @@
   .badge.open { background: var(--yellow-bg); color: var(--yellow); border: 1px solid rgba(245,158,11,0.15); }
   .badge.closed { background: var(--green-bg); color: var(--green); border: 1px solid rgba(16,185,129,0.15); }
 
-  /* ── Card Details (expand) ── */
+  /* ── Card Details ── */
   .card-details {
-    max-height: 0; overflow: hidden; transition: max-height 0.35s ease, padding 0.35s ease;
+    max-height: 0; overflow: hidden; transition: max-height 0.4s ease, padding 0.4s ease;
     padding: 0 18px; background: var(--bg3); border-top: 1px solid transparent;
   }
   .card.expanded .card-details {
-    max-height: 300px; padding: 14px 18px; border-top-color: var(--border);
+    max-height: 500px; padding: 16px 18px; border-top-color: var(--border);
+  }
+  .detail-section { margin-bottom: 14px; }
+  .detail-section:last-child { margin-bottom: 0; }
+  .detail-section-title {
+    font-size: 10px; color: var(--muted); text-transform: uppercase;
+    letter-spacing: 1.2px; font-weight: 600; margin-bottom: 8px;
+    padding-bottom: 4px; border-bottom: 1px solid var(--border);
   }
   .detail-grid {
-    display: grid; grid-template-columns: repeat(auto-fill, minmax(160px, 1fr));
-    gap: 12px;
+    display: grid; grid-template-columns: repeat(auto-fill, minmax(150px, 1fr)); gap: 10px;
   }
   .detail-item .dl { font-size: 10px; color: var(--muted); text-transform: uppercase; letter-spacing: 0.8px; }
-  .detail-item .dv { font-size: 13px; font-weight: 600; margin-top: 2px; }
-
-  /* ── Chevron ── */
+  .detail-item .dv { font-size: 13px; font-weight: 600; margin-top: 2px; word-break: break-all; }
+  .detail-item .dv a { color: var(--accent); text-decoration: none; }
+  .detail-item .dv a:hover { text-decoration: underline; }
+  .market-desc {
+    font-size: 12px; color: var(--muted); line-height: 1.5;
+    padding: 8px 12px; background: var(--bg4); border-radius: 8px;
+    margin-top: 4px;
+  }
   .chevron { color: var(--muted2); font-size: 12px; transition: transform 0.3s; }
   .card.expanded .chevron { transform: rotate(90deg); }
 
@@ -209,7 +231,8 @@
   .c-green { color: var(--green); } .c-red { color: var(--red); }
   .c-blue { color: var(--blue); } .c-yellow { color: var(--yellow); }
   .c-cyan { color: var(--cyan); } .c-muted { color: var(--muted); }
-  .c-accent { color: var(--accent); }
+  .c-accent { color: var(--accent); } .c-orange { color: var(--orange); }
+  .c-pink { color: var(--pink); }
 </style>
 </head>
 <body>
@@ -219,9 +242,11 @@
 <div class="header">
   <div class="header-left">
     <h1>⚡ Polymarket Copy-Bot</h1>
-    <div class="sub"><span class="live-dot"></span> Auto-refresh every 5s · <span id="lastUpdated">Loading…</span></div>
+    <div class="sub">
+      <span class="live-dot"></span> Live · <span id="lastUpdated">Loading…</span>
+      <span class="uptime-pill" id="uptimeBadge">—</span>
+    </div>
   </div>
-  <div class="header-right" id="uptimeBadge"></div>
 </div>
 
 <!-- ═══ Stats ═══ -->
@@ -231,46 +256,55 @@
   <div class="pill" style="--pill-color:var(--blue)"><div class="pill-label">Volume</div><div class="pill-value c-blue" id="sVol">—</div><div class="pill-sub" id="sVolSub"></div></div>
   <div class="pill" style="--pill-color:var(--green)"><div class="pill-label">Copied</div><div class="pill-value c-green" id="sCopied">—</div></div>
   <div class="pill" style="--pill-color:var(--muted)"><div class="pill-label">Detected</div><div class="pill-value c-muted" id="sDetected">—</div></div>
+  <div class="pill" style="--pill-color:var(--orange)"><div class="pill-label">AI Rejected</div><div class="pill-value c-orange" id="sAiRejected">—</div></div>
   <div class="pill" style="--pill-color:var(--yellow)"><div class="pill-label">Skipped</div><div class="pill-value c-yellow" id="sSkipped">—</div></div>
   <div class="pill" style="--pill-color:var(--red)"><div class="pill-label">Failed</div><div class="pill-value c-red" id="sFailed">—</div></div>
   <div class="pill" style="--pill-color:var(--accent)"><div class="pill-label">Win Rate</div><div class="pill-value c-accent" id="sRate">—</div><div class="pill-sub" id="sRateSub"></div></div>
   <div class="pill" style="--pill-color:var(--muted)"><div class="pill-label">Copy Rate</div><div class="pill-value" id="sCopyRate">—</div><div class="pill-sub" id="sCopyRateSub"></div></div>
 </div>
 
-<!-- ═══ Risk + Positions ═══ -->
-<div class="panels">
-  <div class="panel">
-    <div class="panel-head"><span class="icon">🛡️</span> Risk Status</div>
-    <div class="panel-body" id="riskPanel"><div class="empty" style="padding:20px"><div class="msg">Loading…</div></div></div>
-  </div>
-  <div class="panel">
-    <div class="panel-head"><span class="icon">📂</span> Open Positions</div>
-    <div class="panel-body" id="posPanel"><div class="empty" style="padding:20px"><div class="msg">No positions</div></div></div>
-  </div>
-</div>
-
-<!-- ═══ Trades ═══ -->
-<div class="section-bar">
-  <div class="section-title">📋 Trade Journal</div>
-  <div style="display:flex;gap:8px;align-items:center;flex-wrap:wrap">
-    <div class="tabs">
-      <div class="tab active" data-f="all" onclick="setTab(this)">All</div>
-      <div class="tab" data-f="open" onclick="setTab(this)">Open</div>
-      <div class="tab" data-f="closed" onclick="setTab(this)">Closed</div>
+<!-- ═══ Risk + Traders ═══ -->
+<div class="main-grid">
+  <!-- Journal area (left) -->
+  <div>
+    <div class="section-bar">
+      <div class="section-title">📋 Trade Journal</div>
+      <div style="display:flex;gap:8px;align-items:center;flex-wrap:wrap">
+        <div class="tabs">
+          <div class="tab active" data-f="all" onclick="setTab(this)">All</div>
+          <div class="tab" data-f="open" onclick="setTab(this)">Open</div>
+          <div class="tab" data-f="closed" onclick="setTab(this)">Closed</div>
+        </div>
+        <input class="search-input" type="text" id="searchBox" placeholder="Search market, outcome, trader…" oninput="renderCards()">
+      </div>
     </div>
-    <input class="search-input" type="text" id="searchBox" placeholder="Search market, outcome, trader…" oninput="renderCards()">
+    <div class="cards" id="cardsContainer">
+      <div class="empty"><div class="emoji">📡</div><div class="msg">Waiting for trade data…</div><div class="hint">Trades will appear here once the bot copies them.</div></div>
+    </div>
   </div>
-</div>
 
-<div class="cards" id="cardsContainer">
-  <div class="empty"><div class="emoji">📡</div><div class="msg">Waiting for trade data…</div><div class="hint">Trades will appear here once the bot copies them.</div></div>
+  <!-- Sidebar (right) -->
+  <div class="sidebar">
+    <div class="panel">
+      <div class="panel-head"><span class="icon">🛡️</span> Risk Status</div>
+      <div class="panel-body" id="riskPanel"><div style="color:var(--muted);font-size:12px;text-align:center;padding:20px">Loading…</div></div>
+    </div>
+    <div class="panel">
+      <div class="panel-head"><span class="icon">👥</span> Tracked Traders <span id="traderCount" style="color:var(--muted);font-weight:400;font-size:11px"></span></div>
+      <div class="panel-body no-pad" id="traderPanel"><div style="color:var(--muted);font-size:12px;text-align:center;padding:20px">No trader data</div></div>
+    </div>
+    <div class="panel">
+      <div class="panel-head"><span class="icon">📂</span> Open Exposure <span id="posCount" style="color:var(--muted);font-weight:400;font-size:11px"></span></div>
+      <div class="panel-body" id="posPanel"><div style="color:var(--muted);font-size:12px;text-align:center;padding:12px 0">No positions</div></div>
+    </div>
+  </div>
 </div>
 
 </div><!-- /app -->
 
 <script>
-let allEntries = [], allPositions = [], allRisk = {}, activeTab = 'all';
-let expandedId = null;
+let allEntries = [], allPositions = [], allRisk = {}, allTraders = [], activeTab = 'all';
+let expandedId = null, startTime = 0;
 
 function setTab(el) {
   document.querySelectorAll('.tab').forEach(t => t.classList.remove('active'));
@@ -297,8 +331,22 @@ function fmtTime(ms) {
   return s+'s';
 }
 function fmtShort$(v) {
+  if (Math.abs(v) >= 1000000) return '$' + (v/1000000).toFixed(1) + 'M';
   if (Math.abs(v) >= 1000) return '$' + (v/1000).toFixed(1) + 'k';
   return '$' + (v || 0).toFixed(2);
+}
+function fmtPct(v) { return (v * 100).toFixed(1) + '%'; }
+function esc(s) { return (s||'').replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;'); }
+
+function updateUptime() {
+  if (!startTime) return;
+  const ms = Date.now() - startTime;
+  const s = Math.floor(ms/1000), m = Math.floor(s/60), h = Math.floor(m/60), d = Math.floor(h/24);
+  let txt = '';
+  if (d > 0) txt = `${d}d ${h%24}h ${m%60}m`;
+  else if (h > 0) txt = `${h}h ${m%60}m`;
+  else txt = `${m}m ${s%60}s`;
+  document.getElementById('uptimeBadge').textContent = '⏱ ' + txt;
 }
 
 async function fetchData() {
@@ -307,6 +355,10 @@ async function fetchData() {
     if (!r.ok) return;
     const d = await r.json();
     const s = d.stats || {};
+
+    // Uptime
+    startTime = d.startTime || Date.now();
+    updateUptime();
 
     // Stats
     const pnl = (d.risk || {}).sessionPnl || 0;
@@ -318,9 +370,11 @@ async function fetchData() {
     document.getElementById('sVolSub').textContent = s.tradesCopied ? `${s.tradesCopied} trades` : '';
     document.getElementById('sCopied').textContent = s.tradesCopied || 0;
     document.getElementById('sDetected').textContent = s.tradesDetected || 0;
+    document.getElementById('sAiRejected').textContent = s.tradesAiRejected || 0;
     document.getElementById('sSkipped').textContent = s.tradesSkipped || 0;
     document.getElementById('sFailed').textContent = s.tradesFailed || 0;
-    // Win Rate — calculated from closed trades (entries with pnl defined)
+
+    // Win Rate from closed trades
     const entries = d.entries || [];
     const closedTrades = entries.filter(e => e.pnl != null);
     const wins = closedTrades.filter(e => e.pnl > 0).length;
@@ -329,8 +383,8 @@ async function fetchData() {
     const rateEl = document.getElementById('sRate');
     rateEl.textContent = winRate;
     rateEl.className = 'pill-value ' + (closedTrades.length > 0 ? (wins >= losses ? 'c-green' : 'c-red') : 'c-accent');
-    document.getElementById('sRateSub').textContent = closedTrades.length > 0 ? `${wins}W / ${losses}L · ${closedTrades.length} trades` : 'No closed trades yet';
-    // Copy Rate — how many detected trades were actually copied
+    document.getElementById('sRateSub').textContent = closedTrades.length > 0 ? `${wins}W / ${losses}L` : 'No closed trades yet';
+    // Copy Rate
     const copyRate = s.tradesDetected > 0 ? ((s.tradesCopied / s.tradesDetected) * 100).toFixed(1) + '%' : '—';
     document.getElementById('sCopyRate').textContent = copyRate;
     document.getElementById('sCopyRateSub').textContent = `${s.tradesCopied || 0} of ${s.tradesDetected || 0}`;
@@ -339,12 +393,16 @@ async function fetchData() {
     allRisk = d.risk || {};
     renderRisk();
 
-    // Positions
+    // Traders
+    allTraders = d.traders || [];
+    renderTraders();
+
+    // Positions (from PositionTracker, enriched with titles)
     allPositions = d.positions || [];
     renderPositions(d.openPositions || []);
 
     // Entries
-    allEntries = d.entries || [];
+    allEntries = entries;
     document.getElementById('lastUpdated').textContent = d.lastUpdated ? new Date(d.lastUpdated).toLocaleTimeString() : '—';
     renderCards();
   } catch(e) {}
@@ -359,45 +417,66 @@ function renderRisk() {
   const halted = r.halted;
 
   let h = '';
-  // P&L
-  const pnlPct = peak > 0 ? Math.min(Math.abs(pnl) / peak * 100, 100) : 0;
+  const pnlPct = peak > 0 ? Math.min(Math.abs(pnl) / (peak || 1) * 100, 100) : 0;
   h += `<div class="risk-item">
     <div class="risk-label"><span>Session P&L</span><span class="${pnl >= 0 ? 'c-green' : 'c-red'}">${fmt$(pnl)}</span></div>
     <div class="bar"><div class="bar-fill ${pnl >= 0 ? 'green' : 'red'}" style="width:${pnlPct}%"></div></div>
   </div>`;
-  // Volume
-  h += `<div class="risk-item">
-    <div class="risk-label"><span>Session Volume</span><span>${fmt$(notional)}</span></div>
-  </div>`;
-  // Daily loss
-  h += `<div class="risk-item">
-    <div class="risk-label"><span>Daily Loss</span><span>${fmt$(daily)}</span></div>
-  </div>`;
-  // Streak
-  h += `<div class="risk-item">
-    <div class="risk-label"><span>Streak</span><span>${r.consecutiveWins || 0}W / ${r.consecutiveLosses || 0}L</span></div>
-  </div>`;
-  // Status
+  h += `<div class="risk-item"><div class="risk-label"><span>Session Volume</span><span>${fmt$(notional)}</span></div></div>`;
+  h += `<div class="risk-item"><div class="risk-label"><span>Daily Loss</span><span>${fmt$(daily)}</span></div></div>`;
+  h += `<div class="risk-item"><div class="risk-label"><span>Streak</span><span>${r.consecutiveWins || 0}W / ${r.consecutiveLosses || 0}L</span></div></div>`;
   if (halted) {
-    h += `<div style="margin-top:10px;padding:8px 12px;background:var(--red-bg);border:1px solid rgba(239,68,68,0.2);border-radius:8px;font-size:12px;color:var(--red)">🛑 HALTED: ${r.haltReason || 'Unknown'}</div>`;
+    h += `<div style="margin-top:10px;padding:8px 12px;background:var(--red-bg);border:1px solid rgba(239,68,68,0.2);border-radius:8px;font-size:12px;color:var(--red)">🛑 HALTED: ${esc(r.haltReason)}</div>`;
   } else {
     h += `<div style="margin-top:6px;font-size:12px;color:var(--green)">✅ Risk checks active</div>`;
   }
-
   document.getElementById('riskPanel').innerHTML = h;
+}
+
+function renderTraders() {
+  const traders = allTraders;
+  document.getElementById('traderCount').textContent = traders.length > 0 ? `(${traders.length})` : '';
+  if (traders.length === 0) {
+    document.getElementById('traderPanel').innerHTML = '<div style="color:var(--muted);font-size:12px;text-align:center;padding:20px">No trader data</div>';
+    return;
+  }
+  let h = '';
+  for (const t of traders) {
+    const wrClass = (t.wins + t.losses) > 0 ? (t.winRate >= 0.5 ? 'pos' : 'neg') : 'neutral';
+    h += `<div class="trader-item">
+      <div>
+        <div class="trader-addr" title="${esc(t.address)}">${esc(t.short)}</div>
+        <div style="font-size:10px;color:var(--muted);margin-top:1px">${fmtShort$(t.volume)} vol</div>
+      </div>
+      <div class="trader-stats">
+        <div class="trades">${t.trades} trades</div>
+        <div class="meta"><span class="wr ${wrClass}">${(t.wins + t.losses) > 0 ? fmtPct(t.winRate) : '—'}</span> WR · ${fmt$(t.pnl)} P&L</div>
+      </div>
+    </div>`;
+  }
+  document.getElementById('traderPanel').innerHTML = h;
 }
 
 function renderPositions(openJournal) {
   const pos = allPositions;
+  const totalNotional = pos.reduce((s, p) => s + (p.notional || 0), 0);
+  document.getElementById('posCount').textContent = pos.length > 0 ? `(${pos.length} · ${fmt$(totalNotional)})` : '';
   let h = '';
   if (pos.length === 0 && openJournal.length === 0) {
-    h = '<div style="color:var(--muted);font-size:12px;padding:12px 0;text-align:center">No open positions</div>';
+    h = '<div style="color:var(--muted);font-size:12px;text-align:center;padding:12px 0">No open positions</div>';
   } else {
-    const items = pos.length > 0 ? pos : openJournal.map(e => ({ outcome: e.outcome, market: e.market, shares: e.shares || e.size || 0, notional: (e.entryPrice||0)*(e.shares||e.size||0), avgPrice: e.entryPrice || 0 }));
+    const items = pos.length > 0 ? pos : openJournal.map(e => ({
+      outcome: e.outcome, market: e.market, title: e.title || e.market,
+      tokenId: e.tokenId, shares: e.shares || e.size || 0,
+      notional: (e.entryPrice||0)*(e.shares||e.size||0), avgPrice: e.entryPrice || 0
+    }));
     for (const p of items) {
-      h += `<div class="pos-item">
-        <div><div class="pos-name">${(p.outcome||'').slice(0,30)}</div><div class="pos-market">${(p.market||'').slice(0,40)}</div></div>
-        <div class="pos-stats"><div class="notional">${fmt$(p.notional)}</div><div class="meta">${(p.shares||0).toFixed(2)} sh · avg $${(p.avgPrice||0).toFixed(4)}</div></div>
+      const title = (p.title || p.outcome || '').slice(0, 35);
+      h += `<div style="padding:8px 0;border-bottom:1px solid var(--border);display:flex;justify-content:space-between;align-items:center">
+        <div><div style="font-size:13px;font-weight:500">${esc(title)}</div>
+        <div style="font-size:10px;color:var(--muted);margin-top:1px">${esc((p.outcome||'').slice(0,20))}</div></div>
+        <div style="text-align:right"><div style="color:var(--cyan);font-weight:600;font-size:13px">${fmt$(p.notional)}</div>
+        <div style="color:var(--muted);font-size:10px">${(p.shares||0).toFixed(2)} sh · avg $${(p.avgPrice||0).toFixed(4)}</div></div>
       </div>`;
     }
   }
@@ -424,36 +503,56 @@ function renderCards() {
     const isClosed = e.exitPrice != null;
     const pnlVal = e.pnl;
     const notional = (e.entryPrice||0) * (e.size||0);
-    const time = new Date(e.timestamp).toLocaleTimeString();
-    const trader = e.trader ? e.trader.slice(0,8) + '…' : '—';
+    const time = new Date(e.timestamp).toLocaleString();
+    const trader = e.trader ? e.trader.slice(0,6) + '…' + e.trader.slice(-4) : '—';
+    const traderFull = e.trader || '';
     const pnlClass = pnlVal != null ? (pnlVal >= 0 ? 'pos' : 'neg') : '';
+    const title = (e.title || e.outcome || '').slice(0, 50);
+    const fullTitle = esc(e.title || e.market || '');
+    const polyLink = e.slug ? `https://polymarket.com/event/${e.slug}` : '';
+    const holdTime = e.holdTimeMs != null ? fmtTime(e.holdTimeMs) : (isClosed ? '—' : fmtTime(Date.now() - e.timestamp));
+    const roi = (e.pnl != null && notional > 0.01) ? ((e.pnl / notional) * 100).toFixed(2) + '%' : '—';
 
     html += `<div class="card ${isExpanded ? 'expanded' : ''}" data-id="${e.tradeId}" onclick="toggleCard(this)">
       <div class="card-main">
         <div class="card-side ${e.side === 'BUY' ? 'buy' : 'sell'}">${e.side}</div>
         <div class="card-market">
-          <div class="outcome">${(e.outcome||'').slice(0,40)}</div>
-          <div class="market-name" title="${(e.title||e.market||'').replace(/"/g,'&quot;')}">${(e.title||e.market||'').slice(0,60)}</div>
+          <div class="outcome">${esc((e.outcome||'').slice(0,40))}</div>
+          <div class="market-name" title="${fullTitle}">${esc(title)}</div>
+          ${polyLink ? `<a class="market-link" href="${polyLink}" target="_blank" rel="noopener" onclick="event.stopPropagation()">↗ polymarket.com</a>` : ''}
         </div>
         <div class="card-price"><div class="val">$${(e.entryPrice||0).toFixed(4)}</div><div class="lbl">Entry</div></div>
-        <div class="card-pnl"><div class="val ${pnlClass}">${pnlVal != null ? fmt$(pnlVal) : '—'}</div><div class="lbl">P&L</div></div>
+        <div class="card-pnl"><div class="val ${pnlClass}">${pnlVal != null ? fmt$(pnlVal) : '—'}</div><div class="lbl">${pnlVal != null ? 'P&L' : 'P&L'}</div></div>
         <div class="card-status">
           <span class="badge ${isClosed ? 'closed' : 'open'}">${isClosed ? '✅ Closed' : '⏳ Open'}</span>
           <div class="chevron" style="margin-top:4px">▶</div>
         </div>
       </div>
       <div class="card-details">
-        <div class="detail-grid">
-          <div class="detail-item"><div class="dl">Trade ID</div><div class="dv">${e.tradeId||'—'}</div></div>
-          <div class="detail-item"><div class="dl">Time</div><div class="dv">${time}</div></div>
-          <div class="detail-item"><div class="dl">Trader</div><div class="dv" style="color:var(--cyan)">${trader}</div></div>
-          <div class="detail-item"><div class="dl">Notional</div><div class="dv">${fmt$(notional)}</div></div>
-          <div class="detail-item"><div class="dl">Shares</div><div class="dv">${(e.size||0).toFixed(4)}</div></div>
-          <div class="detail-item"><div class="dl">Entry Price</div><div class="dv">$${(e.entryPrice||0).toFixed(4)}</div></div>
-          <div class="detail-item"><div class="dl">Exit Price</div><div class="dv">${e.exitPrice ? '$'+e.exitPrice.toFixed(4) : '—'}</div></div>
-          <div class="detail-item"><div class="dl">Hold Time</div><div class="dv">${fmtTime(e.holdTimeMs)}</div></div>
-          <div class="detail-item"><div class="dl">Token ID</div><div class="dv" style="font-size:11px;color:var(--muted)">${(e.tokenId||'—').slice(0,20)}…</div></div>
-          <div class="detail-item"><div class="dl">Source</div><div class="dv">${e.source||'—'}</div></div>
+        <div class="detail-section">
+          <div class="detail-section-title">Market & Context</div>
+          ${fullTitle && fullTitle !== esc(e.outcome) ? `<div class="market-desc">${fullTitle}</div>` : ''}
+          <div class="detail-grid" style="margin-top:8px">
+            <div class="detail-item"><div class="dl">Market ID</div><div class="dv" style="font-size:10px;color:var(--muted);font-family:monospace">${esc((e.market||'').slice(0,20))}…</div></div>
+            <div class="detail-item"><div class="dl">Token ID</div><div class="dv" style="font-size:10px;color:var(--muted);font-family:monospace">${esc((e.tokenId||'').slice(0,16))}…</div></div>
+            <div class="detail-item"><div class="dl">Reason</div><div class="dv" style="font-size:11px;color:var(--muted)">${esc(e.reason||'—')}</div></div>
+          </div>
+        </div>
+        <div class="detail-section">
+          <div class="detail-section-title">Trade</div>
+          <div class="detail-grid">
+            <div class="detail-item"><div class="dl">Time</div><div class="dv">${time}</div></div>
+            <div class="detail-item"><div class="dl">Trader</div><div class="dv" style="color:var(--cyan);font-family:monospace;font-size:11px" title="${esc(traderFull)}">${esc(trader)}</div></div>
+            <div class="detail-item"><div class="dl">Notional</div><div class="dv">${fmt$(notional)}</div></div>
+            <div class="detail-item"><div class="dl">Shares</div><div class="dv">${(e.size||0).toFixed(4)}</div></div>
+            <div class="detail-item"><div class="dl">Entry Price</div><div class="dv">$${(e.entryPrice||0).toFixed(4)}</div></div>
+            <div class="detail-item"><div class="dl">Exit Price</div><div class="dv">${e.exitPrice ? '$'+e.exitPrice.toFixed(4) : '—'}</div></div>
+            <div class="detail-item"><div class="dl">P&L</div><div class="dv ${pnlClass}">${pnlVal != null ? fmt$(pnlVal) : '—'}</div></div>
+            <div class="detail-item"><div class="dl">ROI</div><div class="dv ${pnlClass}">${roi}</div></div>
+            <div class="detail-item"><div class="dl">Hold Time</div><div class="dv">${holdTime}</div></div>
+            <div class="detail-item"><div class="dl">Source</div><div class="dv">${esc(e.source||'—')}</div></div>
+            <div class="detail-item"><div class="dl">Trade ID</div><div class="dv" style="font-size:11px;color:var(--muted)">${esc(e.tradeId)}</div></div>
+          </div>
         </div>
       </div>
     </div>`;
@@ -464,6 +563,7 @@ function renderCards() {
 
 fetchData();
 setInterval(fetchData, 5000);
+setInterval(updateUptime, 10000);
 </script>
 </body>
 </html>

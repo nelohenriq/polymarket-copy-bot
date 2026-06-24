@@ -201,6 +201,7 @@ export class TradeMonitor {
         user: (raw.proxyWallet as string || '').toLowerCase(),
         outcome: (raw.outcome as string) || (raw.title as string) || 'Unknown',
         title,
+        slug: raw.slug as string || undefined,
       };
     } catch {
       log.debug(`Failed to parse trade: ${JSON.stringify(raw).slice(0, 100)}`);

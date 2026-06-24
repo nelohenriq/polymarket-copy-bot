@@ -484,13 +484,55 @@ async function main(): Promise<void> {
       if (reqPath === '/dry-run-trades.json') {
         res.writeHead(200, { 'Content-Type': 'application/json', 'Access-Control-Allow-Origin': '*' });
         // Always return live stats from memory (up-to-date even if file hasn't been written yet)
+        // Build title lookup from journal entries for position enrichment
+        const journalEntries = journal ? journal.getEntries() : [];
+        const titleByToken = new Map<string, string>();
+        for (const e of journalEntries) {
+          if (e.title && e.tokenId) titleByToken.set(e.tokenId, e.title);
+        }
+        // Per-trader aggregation
+        const traderMap = new Map<string, { trades: number; volume: number; pnl: number; wins: number; losses: number }>();
+        for (const e of journalEntries) {
+          if (!e.trader) continue;
+          const t = traderMap.get(e.trader) || { trades: 0, volume: 0, pnl: 0, wins: 0, losses: 0 };
+          t.trades++;
+          t.volume += (e.entryPrice || 0) * (e.size || 0);
+          if (e.pnl !== undefined) {
+            t.pnl += e.pnl;
+            if (e.pnl > 0) t.wins++; else if (e.pnl < 0) t.losses++;
+          }
+          traderMap.set(e.trader, t);
+        }
+        const traders = Array.from(traderMap.entries()).map(([addr, t]) => ({
+          address: addr,
+          short: addr.slice(0, 6) + '…' + addr.slice(-4),
+          ...t,
+          winRate: (t.wins + t.losses) > 0 ? t.wins / (t.wins + t.losses) : 0,
+        })).sort((a, b) => b.trades - a.trades);
+
         const liveData = {
           lastUpdated: new Date().toISOString(),
+          startTime: stats.startTime,
           stats: { ...stats },
-          entries: journal ? journal.getEntries() : [],
-          openPositions: journal ? journal.getOpenPositions().map(e => ({ outcome: e.outcome, tokenId: e.tokenId, shares: e.size, entryPrice: e.entryPrice, timestamp: e.timestamp, market: e.market, reason: e.reason })) : [],
-          positions: positions.getAllPositions().filter(p => p.shares > 0).map(p => ({ market: p.market, outcome: p.outcome, shares: p.shares, notional: p.notional, avgPrice: p.avgPrice })),
+          entries: journalEntries,
+          openPositions: journal ? journal.getOpenPositions().map(e => ({ outcome: e.outcome, tokenId: e.tokenId, shares: e.size, entryPrice: e.entryPrice, timestamp: e.timestamp, market: e.market, title: e.title, reason: e.reason, trader: e.trader })) : [],
+          positions: positions.getAllPositions().filter(p => p.shares > 0).map(p => ({
+            market: p.market,
+            title: titleByToken.get(p.tokenId) || p.outcome,
+            outcome: p.outcome,
+            tokenId: p.tokenId,
+            shares: p.shares,
+            notional: p.notional,
+            avgPrice: p.avgPrice,
+          })),
           risk: { ...riskManager.getState() },
+          traders,
+          config: {
+            maxSessionNotional: config.maxSessionNotional,
+            maxPerMarketNotional: config.maxPerMarketNotional,
+            positionMultiplier: config.positionMultiplier,
+            targetWallets: config.targetWallets.length,
+          },
         };
         res.end(JSON.stringify(liveData));
       } else if (reqPath === '/' || reqPath === '/dashboard.html') {

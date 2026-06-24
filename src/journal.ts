@@ -29,6 +29,7 @@ export class TradeJournal {
       reason: `Copy-trade from ${trade.user.slice(0, 8)}...`,
       source,
       trader: trade.user,
+      slug: trade.slug,
     };
 
     this.entries.push(entry);

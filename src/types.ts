@@ -110,6 +110,7 @@ export interface ParsedTrade {
   user: string;
   outcome: string;
   title: string;
+  slug?: string;
 }
 
 // ──────────────────────────────────────────────
@@ -322,6 +323,7 @@ export interface TradeJournalEntry {
   reason: string;
   source: string; // e.g. 'copy-trade', 'signal', 'manual'
   trader?: string; // Target wallet address that triggered this trade
+  slug?: string; // Market slug for Polymarket links
 }
 
 /** Snapshot of the virtual portfolio at a point in time */
