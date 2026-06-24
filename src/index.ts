@@ -331,6 +331,8 @@ async function main(): Promise<void> {
     stateRestored: !!savedState,
     catchUpRan: false as boolean,
     catchUpMissedSells: 0,
+    catchUpAutoCloses: 0,
+    catchUpAutoCloseFails: 0,
     catchUpDeviationBlocks: 0,
     stalePositionCount: 0,
     stalePositions: [] as string[],
@@ -623,6 +625,7 @@ async function main(): Promise<void> {
       for (const wallet of config.targetWallets) {
         const lastTs = lastProcessedTimestamps.get(wallet) || 0;
         if (lastTs === 0) continue;
+        let lastSuccessfulTs = lastTs; // Only advance watermark for successfully processed trades
 
         try {
           const { proxyFetch } = await import('./proxy');
@@ -678,37 +681,63 @@ async function main(): Promise<void> {
                 }
 
                 // Safe to close — price deviation within bounds
-                journal.recordExit(raw.asset, exitPrice, tradeTs);
-                missedSells++;
-                const exitPnl = openPos.pnl ?? 0;
+                // If auto-close is enabled, attempt CLOB SELL order first
+                let clobCloseSuccess = true;
+                if (config.autoCloseOnCatchUp && clob && !config.dryRun) {
+                  try {
+                    log.info(`🔄 [AUTO-CLOSE] Placing SELL order: ${openPos.outcome.slice(0, 30)} | ${openPos.size.toFixed(4)} shares @ $${exitPrice.toFixed(4)}`);
+                    const closeResult = await executor.executeCloseOrder(openPos.tokenId, openPos.size, exitPrice);
+                    if (closeResult.success) {
+                      reconciliation.catchUpAutoCloses++;
+                      log.success(`✅ [AUTO-CLOSE] Order filled: ${closeResult.orderId} | ${closeResult.copyShares.toFixed(4)} shares @ $${closeResult.price.toFixed(4)}`);
+                      telegram?.notifyExecution({ side: 'SELL', shares: closeResult.copyShares, price: closeResult.price, notional: closeResult.copyNotional, orderId: closeResult.orderId ?? '', outcome: openPos.outcome });
+                    } else {
+                      clobCloseSuccess = false;
+                      reconciliation.catchUpAutoCloseFails++;
+                      log.error(`❌ [AUTO-CLOSE] Order failed: ${closeResult.error} — position left open for retry`);
+                      telegram?.notifyError('Auto-Close Failed', `${openPos.outcome.slice(0, 40)}: ${closeResult.error}`);
+                    }
+                  } catch (closeErr) {
+                    clobCloseSuccess = false;
+                    reconciliation.catchUpAutoCloseFails++;
+                    const closeMsg = closeErr instanceof Error ? closeErr.message : String(closeErr);
+                    log.error(`❌ [AUTO-CLOSE] Error: ${closeMsg} — position left open for retry`);
+                  }
+                }
 
-                // Update risk manager: free notional + record P&L
-                riskManager.reduceSessionNotional(openPos.entryPrice * openPos.size);
-                riskManager.addSessionPnl(exitPnl);
+                // Only record journal exit if auto-close succeeded or auto-close is disabled
+                if (clobCloseSuccess) {
+                  journal.recordExit(raw.asset, exitPrice, tradeTs);
+                  missedSells++;
+                  const exitPnl = openPos.pnl ?? 0;
 
-                const emoji = exitPnl >= 0 ? '✅' : '❌';
+                  // Update risk manager: free notional + record P&L
+                  riskManager.reduceSessionNotional(openPos.entryPrice * openPos.size);
+                  riskManager.addSessionPnl(exitPnl);
+
+                  const emoji = exitPnl >= 0 ? '✅' : '❌';
                 log.info(
                   `${emoji} [CATCH-UP EXIT] ${openPos.outcome.slice(0, 30)} | ` +
                   `P&L: $${exitPnl.toFixed(2)} | Exit: $${exitPrice.toFixed(4)}`
                 );
-                telegram?.notifyTrade({
-                  side: 'SELL',
-                  size: openPos.size,
-                  price: exitPrice,
-                  outcome: openPos.outcome,
-                  user: openPos.trader || 'unknown',
-                });
+                  telegram?.notifyTrade({
+                    side: 'SELL',
+                    size: openPos.size,
+                    price: exitPrice,
+                    outcome: openPos.outcome,
+                    user: openPos.trader || 'unknown',
+                  });
+                  lastSuccessfulTs = Math.max(lastSuccessfulTs, tradeTs);
+                } else {
+                  log.info(`⏳ [AUTO-CLOSE] Skipping journal exit — will retry on next restart`);
+                }
               }
             }
           }
 
-          // Update lastProcessedTimestamp for this wallet
-          const latestTs = trades.length > 0
-            ? (typeof trades[trades.length - 1].timestamp === 'number'
-              ? trades[trades.length - 1].timestamp * 1000
-              : new Date(trades[trades.length - 1].timestamp).getTime())
-            : lastTs;
-          lastProcessedTimestamps.set(wallet, Math.max(lastTs, latestTs));
+          // Update lastProcessedTimestamp — only advance to last successful trade
+          // Failed auto-closes stay below the watermark so they retry on next restart
+          lastProcessedTimestamps.set(wallet, Math.max(lastTs, lastSuccessfulTs));
 
         } catch (err) {
           const msg = err instanceof Error ? err.message : String(err);
@@ -719,6 +748,9 @@ async function main(): Promise<void> {
       const openAfter = journal.getOpenPositions().length;
       reconciliation.catchUpMissedSells = missedSells;
       reconciliation.catchUpDeviationBlocks = priceDeviationBlocks;
+      if (reconciliation.catchUpAutoCloses > 0 || reconciliation.catchUpAutoCloseFails > 0) {
+        log.info(`   Auto-close: ${reconciliation.catchUpAutoCloses} order(s) filled, ${reconciliation.catchUpAutoCloseFails} failed`);
+      }
       if (missedSells > 0 || priceDeviationBlocks > 0) {
         log.info(`   Catch-up complete: ${missedSells} missed exits processed, ${priceDeviationBlocks} blocked (price deviation), ${openAfter} positions still open`);
       } else {

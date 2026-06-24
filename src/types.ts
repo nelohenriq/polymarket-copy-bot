@@ -61,6 +61,8 @@ export interface BotConfig {
   stalePositionWarnDays?: number;
   /** Path to the bot state file for position persistence across restarts */
   stateFilePath?: string;
+  /** Auto-close on-chain positions when catch-up replay detects a missed SELL within deviation threshold */
+  autoCloseOnCatchUp?: boolean;
 }
 
 export type CopyOrderType = 'FOK' | 'GTC' | 'FAK';

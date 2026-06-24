@@ -124,6 +124,7 @@ export function loadConfig(allowMissingKey = false): BotConfig {
     maxMissedSellDeviation: parseFloatEnv('MAX_MISSED_SELL_DEVIATION', 0.15),
     stalePositionWarnDays: parseFloatEnv('STALE_POSITION_WARN_DAYS', 30),
     stateFilePath: process.env['STATE_FILE_PATH'] || 'bot-state.json',
+    autoCloseOnCatchUp: parseBoolEnv('AUTO_CLOSE_ON_CATCH_UP', false),
   };
 
   return config;
@@ -344,6 +345,7 @@ export function printConfig(config: BotConfig): void {
   if (config.bullpenEnabled) console.log('   Bullpen:          ✅ ENABLED');
   console.log(`   State persistence: ${config.stateFilePath || 'bot-state.json'}`);
   console.log(`   Missed sell deviation: ${((config.maxMissedSellDeviation ?? 0.15) * 100).toFixed(0)}%`);
+  console.log(`   Auto-close on catch-up: ${config.autoCloseOnCatchUp ? '✅ ENABLED' : 'disabled'}`);
   console.log(`   Stale position warn:  ${config.stalePositionWarnDays ?? 30} days`);
   console.log('');
 }

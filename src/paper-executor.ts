@@ -57,6 +57,11 @@ export class PaperExecutor {
     };
   }
 
+  /** No-op for paper mode — close orders are simulated via journal only */
+  async executeCloseOrder(_tokenId: string, _shares: number, _price: number): Promise<CopyTradeResult> {
+    return { success: false, copyNotional: 0, copyShares: 0, price: 0, side: 'SELL', error: 'Not supported in paper mode' };
+  }
+
   /**
    * Calculate simulated fill price based on fill mode and slippage.
    */
