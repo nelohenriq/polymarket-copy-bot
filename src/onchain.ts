@@ -61,6 +61,55 @@ export type OnChainFillCallback = (fill: OnChainFill) => void;
 // On-Chain Monitor
 // ──────────────────────────────────────────────
 
+/**
+ * Verify on-chain ERC1155 token balances for a wallet.
+ * Uses balanceOfBatch on the ConditionalTokens contract to check
+ * if our positions actually exist on-chain.
+ *
+ * @param rpcUrl - Polygon RPC endpoint (HTTP/S)
+ * @param walletAddress - Our wallet address (EOA)
+ * @param tokenIds - Array of ERC1155 token IDs to check
+ * @returns Map of tokenId -> on-chain balance (as number of shares)
+ */
+export async function verifyOnChainBalances(
+  rpcUrl: string,
+  walletAddress: string,
+  tokenIds: string[],
+): Promise<Map<string, number>> {
+  const balances = new Map<string, number>();
+  if (tokenIds.length === 0) return balances;
+
+  const provider = new ethers.providers.JsonRpcProvider(rpcUrl);
+
+  // ConditionalTokens contract on Polygon
+  const CTF_ADDRESS = '0x4D97DCd97eC945f40cF65F87097ACe5EA0476045';
+  const CTF_ABI = [
+    'function balanceOfBatch(address[] calldata accounts, uint256[] calldata ids) external view returns (uint256[])',
+  ];
+
+  const contract = new ethers.Contract(CTF_ADDRESS, CTF_ABI, provider);
+
+  // Build parallel arrays: same wallet for each tokenId
+  const owners = tokenIds.map(() => walletAddress);
+
+  // balanceOfBatch has a gas limit for large batches — chunk into groups of 50
+  const CHUNK_SIZE = 50;
+  for (let i = 0; i < tokenIds.length; i += CHUNK_SIZE) {
+    const chunkIds = tokenIds.slice(i, i + CHUNK_SIZE);
+    const chunkOwners = owners.slice(i, i + CHUNK_SIZE);
+
+    const result: ethers.BigNumber[] = await contract.balanceOfBatch(chunkOwners, chunkIds);
+    for (let j = 0; j < chunkIds.length; j++) {
+      const raw = result[j];
+      // ERC1155 amounts are raw integers — Polymarket uses 6 decimal places for conditional tokens
+      const balance = parseFloat(ethers.utils.formatUnits(raw, 6));
+      balances.set(chunkIds[j], balance);
+    }
+  }
+
+  return balances;
+}
+
 export class OnChainMonitor {
   private provider: ethers.providers.WebSocketProvider | null = null;
   private ctfContract: ethers.Contract | null = null;

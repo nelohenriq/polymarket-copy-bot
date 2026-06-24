@@ -850,6 +850,9 @@ function renderRecon(rc) {
       h += `<div class="recon-item"><span class="rl">Stale Canceled</span><span class="rv c-green">${rc.staleOrdersCanceled} ✓</span></div>`;
     }
   }
+  if (rc.onChainVerified) {
+    h += `<div class="recon-item"><span class="rl">On-Chain</span><span class="rv ${rc.onChainMismatched > 0 ? 'c-yellow' : 'c-green'}">${rc.onChainMatched} matched${rc.onChainMismatched > 0 ? ', ' + rc.onChainMismatched + ' mismatched' : ''}</span></div>`;
+  }
   h += '</div>';
 
   // Status alerts

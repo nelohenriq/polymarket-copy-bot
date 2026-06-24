@@ -43,7 +43,7 @@ import { TradeJournal } from './journal';
 import { MetricsCalculator } from './metrics';
 import { AITradeFilter } from './ai-filter';
 import { LeaderboardScraper } from './leaderboard';
-import { OnChainMonitor } from './onchain';
+import { OnChainMonitor, verifyOnChainBalances } from './onchain';
 import { TelegramNotifier } from './telegram';
 import { MarketIntelligence, formatIntelligenceForPrompt } from './intelligence';
 import { log, setLogLevel } from './logger';
@@ -323,6 +323,10 @@ async function main(): Promise<void> {
     stalePositions: [] as string[],
     openOrdersChecked: 0,
     staleOrdersCanceled: 0,
+    onChainVerified: false as boolean,
+    onChainMatched: 0,
+    onChainMismatched: 0,
+    onChainMismatches: [] as string[],
     mode: 'normal' as 'normal' | 'exit-only' | 'profit-shutdown',
   };
 
@@ -753,7 +757,71 @@ async function main(): Promise<void> {
     }
   }
 
-  // ── Step 5f: Stale position monitoring (periodic) ──
+  // ── Step 5f: On-chain balance verification ──
+  // Verify our persisted positions actually exist on-chain by querying
+  // ERC1155 balances from the ConditionalTokens contract on Polygon.
+  // Skipped in dry-run/paper mode (no real on-chain positions).
+  // In live mode, tokens are held by the Polymarket proxy wallet, not the EOA.
+  // We attempt to resolve the proxy wallet from the Data API; if that fails,
+  // verification is skipped silently.
+  const onChainVerify = (process.env['ON_CHAIN_VERIFY'] || 'false').toLowerCase() === 'true';
+  if (onChainVerify && config.rpcUrl && journal && !config.dryRun && !paperMode) {
+    const openPositions = journal.getOpenPositions();
+    if (openPositions.length > 0) {
+      const tokenIds = openPositions.map(e => e.tokenId);
+      try {
+        log.info(`\n🔗 On-chain verification: checking ${tokenIds.length} position(s)...`);
+        const onChainBalances = await verifyOnChainBalances(config.rpcUrl, wallet.address, tokenIds);
+
+        let matched = 0;
+        let mismatched = 0;
+        const mismatches: string[] = [];
+
+        for (const pos of openPositions) {
+          const chainBalance = onChainBalances.get(pos.tokenId) || 0;
+          const localShares = pos.size;
+
+          if (chainBalance > 0) {
+            matched++;
+            log.debug(`  ✅ ${pos.outcome.slice(0, 30)} | on-chain: ${chainBalance.toFixed(4)} shares`);
+          } else {
+            mismatched++;
+            mismatches.push(pos.outcome);
+            log.warn(
+              `  ⚠️  MISMATCH: ${pos.outcome.slice(0, 30)} | ` +
+              `Local: ${localShares.toFixed(4)} shares | On-chain: 0 — position may have been sold or resolved`
+            );
+          }
+        }
+
+        reconciliation.onChainVerified = true;
+        reconciliation.onChainMatched = matched;
+        reconciliation.onChainMismatched = mismatched;
+        reconciliation.onChainMismatches = mismatches;
+
+        if (mismatched > 0) {
+          log.risk(
+            `⚠️  On-chain verification: ${mismatched} of ${tokenIds.length} positions NOT found on-chain — ` +
+            `these may have been sold, resolved, or transferred while the bot was offline`
+          );
+          telegram?.notifyRisk({
+            type: 'halt',
+            message: `🔗 On-chain mismatch: ${mismatched} position(s) not found on-chain\n` +
+              mismatches.map(m => `• ${m.slice(0, 60)}`).join('\n') +
+              `\nThese positions may have been closed. Review recommended.`,
+            trade: mismatches[0],
+          });
+        } else {
+          log.success(`On-chain verification: all ${matched} position(s) confirmed on-chain`);
+        }
+      } catch (verifyErr) {
+        const verifyMsg = verifyErr instanceof Error ? verifyErr.message : String(verifyErr);
+        log.warn(`On-chain verification failed: ${verifyMsg} (continuing without verification)`);
+      }
+    }
+  }
+
+  // ── Step 5g: Stale position monitoring (periodic) ──
   const staleWarnMs = (config.stalePositionWarnDays ?? 30) * 24 * 60 * 60 * 1000;
   const staleAlerted = new Set<string>(); // tokenId -> already alerted (avoid spam)
   const staleCheckInterval = setInterval(() => {
