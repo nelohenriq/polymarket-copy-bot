@@ -254,7 +254,16 @@ async function main(): Promise<void> {
 
     // Restore risk manager state
     if (savedState.riskState) {
-      Object.assign(riskManager.getState(), savedState.riskState);
+      riskManager.restoreState(savedState.riskState);
+    }
+
+    // Recalculate sessionNotional as CURRENT open exposure (not cumulative volume)
+    if (journal) {
+      const openExposure = journal.getOpenPositions().reduce(
+        (sum, p) => sum + (p.entryPrice * p.size), 0
+      );
+      riskManager.setSessionNotional(openExposure);
+      log.info(`Open exposure recalculated: $${openExposure.toFixed(2)} / $${config.maxSessionNotional || '∞'}`);
     }
 
     // Restore session stats
@@ -308,9 +317,10 @@ async function main(): Promise<void> {
     }
   }
 
-  // ── Exit-only mode tracking ──
-  let exitOnlyMode = false;
-  let exitOnlyLogged = false;
+  // ── Mode tracking ──
+  let notionalCappedLogged = false;
+  let profitTargetMonitoring = false;
+  let profitTargetLogged = false;
 
   // ── Reconciliation tracking ──
   const reconciliation = {
@@ -330,27 +340,35 @@ async function main(): Promise<void> {
     mode: 'normal' as 'normal' | 'exit-only' | 'profit-shutdown',
   };
 
+  // If profit target was already reached on startup and we still have open positions,
+  // enter monitoring mode immediately (don't wait for next trade to trigger it)
+  if (journal && config.maxSessionProfit > 0 && riskManager.isProfitTargetReached() && journal.getOpenPositions().length > 0) {
+    profitTargetMonitoring = true;
+    profitTargetLogged = true;
+    reconciliation.mode = 'profit-shutdown';
+    log.success(`🎯 Profit target already reached ($${riskManager.getState().sessionPnl.toFixed(2)}) — monitoring ${journal.getOpenPositions().length} open position(s) for exits`);
+  }
+
   // ── Step 5: Handle incoming trades ──
   async function handleNewTrade(trade: ParsedTrade): Promise<void> {
     stats.tradesDetected++;
 
-    // ── Profit target reached → graceful shutdown ──
-    if (exitOnlyMode && riskManager.isProfitTargetReached()) return; // Already shutting down
-    if (riskManager.isProfitTargetReached()) {
-      exitOnlyMode = true;
+    const isProfitHit = riskManager.isProfitTargetReached();
+    const isCapped = riskManager.isNotionalCapped();
+
+    // ── Profit target reached → monitoring mode (block BUYs, process SELLs) ──
+    if (isProfitHit && !profitTargetLogged) {
+      profitTargetMonitoring = true;
+      profitTargetLogged = true;
       reconciliation.mode = 'profit-shutdown';
-      log.success(`🎯 SESSION PROFIT TARGET REACHED ($${riskManager.getState().sessionPnl.toFixed(2)} >= $${config.maxSessionProfit})`);
-      persistJournal();
-      telegram?.notifyRisk({ type: 'halt', message: `🎯 Profit target reached: $${riskManager.getState().sessionPnl.toFixed(2)} — shutting down`, trade: '' });
-      shutdown('PROFIT TARGET').catch(() => process.exit(0));
-      return;
+      log.success(`🎯 SESSION PROFIT TARGET REACHED ($${riskManager.getState().sessionPnl.toFixed(2)} >= $${config.maxSessionProfit}) — monitoring exits only`);
+      telegram?.notifyRisk({ type: 'halt', message: `🎯 Profit target reached — monitoring exits only until all positions close`, trade: '' });
     }
 
     // ── Notional cap reached → exit-only mode (skip BUYs, process SELLs) ──
-    if (trade.side === 'BUY' && riskManager.isNotionalCapped()) {
-      if (!exitOnlyLogged) {
-        exitOnlyLogged = true;
-        exitOnlyMode = true;
+    if (trade.side === 'BUY' && (isProfitHit || isCapped)) {
+      if (isCapped && !isProfitHit && !notionalCappedLogged) {
+        notionalCappedLogged = true;
         reconciliation.mode = 'exit-only';
         log.warn(`⏸️  Notional cap reached ($${riskManager.getState().sessionNotional.toFixed(2)} / $${config.maxSessionNotional}) — exit-only mode, monitoring for position exits`);
         telegram?.notifyRisk({ type: 'blocked', message: `⏸️ Notional cap reached — monitoring exits only until positions close`, trade: '' });
@@ -359,10 +377,9 @@ async function main(): Promise<void> {
       return;
     }
 
-    // If we were in exit-only mode but notional dropped below cap, resume normal trading
-    if (exitOnlyMode && !riskManager.isNotionalCapped()) {
-      exitOnlyMode = false;
-      exitOnlyLogged = false;
+    // Resume normal trading if notional dropped below cap (and not in profit monitoring)
+    if (!isCapped && notionalCappedLogged && !profitTargetMonitoring) {
+      notionalCappedLogged = false;
       reconciliation.mode = 'normal';
       log.success(`▶️  Notional below cap ($${riskManager.getState().sessionNotional.toFixed(2)} / $${config.maxSessionNotional}) — resuming normal trading`);
     }
@@ -373,12 +390,18 @@ async function main(): Promise<void> {
       journal.recordExit(trade.tokenId, trade.price, trade.timestamp);
       if (exitEntry) {
         const exitPnl = exitEntry.pnl ?? 0;
+        const freedNotional = exitEntry.entryPrice * exitEntry.size;
         const holdMs = exitEntry.holdTimeMs ?? (trade.timestamp - exitEntry.timestamp);
         const holdLabel = holdMs > 86_400_000 ? `${(holdMs / 86_400_000).toFixed(1)}d`
           : holdMs > 3_600_000 ? `${(holdMs / 3_600_000).toFixed(1)}h`
           : `${(holdMs / 60_000).toFixed(0)}m`;
         const emoji = exitPnl >= 0 ? '✅' : '❌';
         log.info(`${emoji} [EXIT] ${exitEntry.outcome} | P&L: $${exitPnl.toFixed(2)} | Hold: ${holdLabel} | Exit: $${trade.price}`);
+
+        // Update risk manager: free notional + record P&L
+        riskManager.reduceSessionNotional(freedNotional);
+        riskManager.addSessionPnl(exitPnl);
+
         telegram?.notifyTrade({
           side: 'SELL',
           size: exitEntry.size,
@@ -391,6 +414,14 @@ async function main(): Promise<void> {
       }
       if (config.dryRun || paperMode) {
         persistJournal();
+      }
+
+      // If in profit monitoring mode and all positions are closed, shut down gracefully
+      if (profitTargetMonitoring && journal.getOpenPositions().length === 0) {
+        log.success('🎯 All positions closed after profit target reached. Shutting down gracefully...');
+        persistJournal();
+        shutdown('PROFIT TARGET COMPLETE').catch(() => process.exit(0));
+        return;
       }
     }
 
@@ -647,6 +678,11 @@ async function main(): Promise<void> {
                 journal.recordExit(raw.asset, exitPrice, tradeTs);
                 missedSells++;
                 const exitPnl = openPos.pnl ?? 0;
+
+                // Update risk manager: free notional + record P&L
+                riskManager.reduceSessionNotional(openPos.entryPrice * openPos.size);
+                riskManager.addSessionPnl(exitPnl);
+
                 const emoji = exitPnl >= 0 ? '✅' : '❌';
                 log.info(
                   `${emoji} [CATCH-UP EXIT] ${openPos.outcome.slice(0, 30)} | ` +
@@ -1142,7 +1178,12 @@ async function runBacktest(
 
     // Record SELL as exit in journal
     if (trade.side === 'SELL') {
+      const exitEntry = journal.findOpenPosition(trade.tokenId);
       journal.recordExit(trade.tokenId, trade.price, trade.timestamp);
+      if (exitEntry) {
+        riskManager.reduceSessionNotional(exitEntry.entryPrice * exitEntry.size);
+        riskManager.addSessionPnl(exitEntry.pnl ?? 0);
+      }
       return;
     }
 

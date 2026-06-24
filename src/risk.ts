@@ -133,6 +133,7 @@ export class RiskManager {
 
   /**
    * Record a completed fill for tracking purposes.
+   * Only increments sessionNotional on BUYs (represents open exposure).
    */
   recordFill(params: {
     trade: ParsedTrade;
@@ -142,27 +143,58 @@ export class RiskManager {
     side: 'BUY' | 'SELL';
     pnl?: number;
   }): void {
-    this.state.sessionNotional += params.notional;
-
-    if (params.pnl !== undefined) {
-      this.state.sessionPnl += params.pnl;
-      this.state.dailyLoss += params.pnl < 0 ? Math.abs(params.pnl) : 0;
-
-      if (params.pnl >= 0) {
-        this.state.consecutiveWins++;
-        this.state.consecutiveLosses = 0;
-      } else {
-        this.state.consecutiveLosses++;
-        this.state.consecutiveWins = 0;
-      }
+    // Only increment notional for BUYs — represents current open exposure
+    if (params.side === 'BUY') {
+      this.state.sessionNotional += params.notional;
     }
 
-    // Track peak capital — only set after the bot has been profitable.
-    // peakCapital starts at 0; drawdown checks are skipped until a profitable
-    // trade sets the baseline. The session notional cap provides protection before then.
+    if (params.pnl !== undefined) {
+      this.addSessionPnl(params.pnl);
+    }
+  }
+
+  /**
+   * Add P&L from a closed trade and update streaks / peak capital.
+   */
+  addSessionPnl(pnl: number): void {
+    this.state.sessionPnl += pnl;
+    this.state.dailyLoss += pnl < 0 ? Math.abs(pnl) : 0;
+
+    if (pnl >= 0) {
+      this.state.consecutiveWins++;
+      this.state.consecutiveLosses = 0;
+    } else {
+      this.state.consecutiveLosses++;
+      this.state.consecutiveWins = 0;
+    }
+
+    // Track peak capital
     if (this.state.sessionPnl > this.state.peakCapital) {
       this.state.peakCapital = this.state.sessionPnl;
     }
+  }
+
+  /**
+   * Reduce session notional when a position is closed (SELL/exit).
+   * Represents freed exposure capacity.
+   */
+  reduceSessionNotional(amount: number): void {
+    this.state.sessionNotional = Math.max(0, this.state.sessionNotional - amount);
+  }
+
+  /**
+   * Set session notional directly (used on startup to recalibrate from open positions).
+   */
+  setSessionNotional(amount: number): void {
+    this.state.sessionNotional = Math.max(0, amount);
+  }
+
+  /**
+   * Restore risk state from persisted data.
+   * Unlike Object.assign(getState(), ...), this modifies the internal state directly.
+   */
+  restoreState(savedState: Partial<RiskState>): void {
+    Object.assign(this.state, savedState);
   }
 
   /**
