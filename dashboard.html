@@ -24,7 +24,7 @@
     font-size: 14px; line-height: 1.5; min-height: 100vh;
   }
   .app { max-width: 1440px; margin: 0 auto; padding: 24px 32px 60px; }
-  @media (max-width: 768px) { .app { padding: 16px; } }
+  @media (max-width: 768px) { .app { padding: 16px; } .pill.sparkline-pill { grid-column: span 1 !important; } .pill.sparkline-pill svg { height: 20px; } }
 
   /* ── Header ── */
   .header {
@@ -251,7 +251,7 @@
 
 <!-- ═══ Stats ═══ -->
 <div class="stats-row" id="statsRow">
-  <div class="pill" style="--pill-color:var(--green)"><div class="pill-label">Session P&L</div><div class="pill-value" id="sPnl">—</div></div>
+  <div class="pill sparkline-pill" style="--pill-color:var(--green);grid-column:span 2"><div class="pill-label">Session P&L</div><div class="pill-value" id="sPnl">—</div><div class="pill-sub" id="sPnlSub"></div><svg id="pnlSparkline" width="100%" height="32" style="margin-top:6px;display:block"></svg></div>
   <div class="pill" style="--pill-color:var(--cyan)"><div class="pill-label">Peak Capital</div><div class="pill-value c-cyan" id="sPeak">—</div></div>
   <div class="pill" style="--pill-color:var(--blue)"><div class="pill-label">Volume</div><div class="pill-value c-blue" id="sVol">—</div><div class="pill-sub" id="sVolSub"></div></div>
   <div class="pill" style="--pill-color:var(--green)"><div class="pill-label">Copied</div><div class="pill-value c-green" id="sCopied">—</div></div>
@@ -305,6 +305,8 @@
 <script>
 let allEntries = [], allPositions = [], allRisk = {}, allTraders = [], activeTab = 'all';
 let expandedId = null, startTime = 0;
+const pnlHistory = []; // {t: timestamp, v: pnlValue} — tracked client-side across fetches
+const PNL_HISTORY_MAX = 360; // ~30 min at 5s intervals
 
 function setTab(el) {
   document.querySelectorAll('.tab').forEach(t => t.classList.remove('active'));
@@ -365,6 +367,12 @@ async function fetchData() {
     const pnlEl = document.getElementById('sPnl');
     pnlEl.textContent = fmt$(pnl);
     pnlEl.className = 'pill-value ' + (pnl >= 0 ? 'c-green' : 'c-red');
+    // Track P&L history for sparkline
+    pnlHistory.push({ t: Date.now(), v: pnl });
+    if (pnlHistory.length > PNL_HISTORY_MAX) pnlHistory.shift();
+    renderSparkline();
+    const peak = (d.risk || {}).peakCapital || 0;
+    document.getElementById('sPnlSub').textContent = peak > 0 ? `Peak: ${fmt$(peak)}` : '';
     document.getElementById('sPeak').textContent = fmt$((d.risk || {}).peakCapital);
     document.getElementById('sVol').textContent = fmtShort$(s.totalVolume);
     document.getElementById('sVolSub').textContent = s.tradesCopied ? `${s.tradesCopied} trades` : '';
@@ -559,6 +567,29 @@ function renderCards() {
   }
 
   document.getElementById('cardsContainer').innerHTML = html;
+}
+
+function renderSparkline() {
+  const svg = document.getElementById('pnlSparkline');
+  if (!svg || pnlHistory.length < 2) { if (svg) svg.innerHTML = ''; return; }
+  const W = svg.clientWidth || 280, H = 32, pad = 2;
+  const vals = pnlHistory.map(p => p.v);
+  const min = Math.min(...vals, 0), max = Math.max(...vals, 0);
+  const range = max - min || 1;
+  const zeroY = pad + (1 - (0 - min) / range) * (H - pad * 2);
+  const points = pnlHistory.map((p, i) => {
+    const x = pad + (i / (pnlHistory.length - 1)) * (W - pad * 2);
+    const y = pad + (1 - (p.v - min) / range) * (H - pad * 2);
+    return `${x.toFixed(1)},${y.toFixed(1)}`;
+  });
+  const lastVal = vals[vals.length - 1];
+  const color = lastVal >= 0 ? '#10b981' : '#ef4444';
+  const fillPoints = points.join(' ') + ` ${W - pad},${zeroY.toFixed(1)} ${pad},${zeroY.toFixed(1)}`;
+  svg.innerHTML =
+    `<line x1="${pad}" y1="${zeroY.toFixed(1)}" x2="${W-pad}" y2="${zeroY.toFixed(1)}" stroke="#1e2d4a" stroke-width="0.5" stroke-dasharray="2,3"/>` +
+    `<polygon points="${fillPoints}" fill="${color}" opacity="0.08"/>` +
+    `<polyline points="${points.join(' ')}" fill="none" stroke="${color}" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"/>` +
+    `<circle cx="${points[points.length-1].split(',')[0]}" cy="${points[points.length-1].split(',')[1]}" r="2.5" fill="${color}"/>`;
 }
 
 fetchData();
