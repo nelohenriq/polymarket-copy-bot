@@ -28,6 +28,7 @@ export class TradeJournal {
       entryPrice: price,
       reason: `Copy-trade from ${trade.user.slice(0, 8)}...`,
       source,
+      copyTimestamp: Date.now(),
       trader: trade.user,
       slug: trade.slug,
       volume24hr: trade.volume24hr,

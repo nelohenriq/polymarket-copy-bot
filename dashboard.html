@@ -405,11 +405,16 @@
           <div class="tab" data-f="open" onclick="setTab(this)">Open</div>
           <div class="tab" data-f="closed" onclick="setTab(this)">Closed</div>
         </div>
-        <input class="search-input" type="text" id="searchBox" placeholder="Search market, outcome, trader…" oninput="renderCards()">
+        <input class="search-input" type="text" id="searchBox" placeholder="Search market, outcome, trader…" oninput="currentPage=1;renderCards()">
       </div>
     </div>
     <div class="cards" id="cardsContainer">
       <div class="empty"><div class="emoji">📡</div><div class="msg">Waiting for trade data…</div><div class="hint">Trades will appear here once the bot copies them.</div></div>
+    </div>
+    <div id="paginationControls" style="display:none;margin-top:16px;align-items:center;justify-content:space-between;gap:12px;padding:8px 0">
+      <button id="prevPage" onclick="changePage(-1)" style="background:var(--bg3);border:1px solid var(--border);border-radius:8px;padding:8px 16px;color:var(--text);cursor:pointer;font-size:12px;font-weight:600;font-family:inherit;transition:all 0.2s">← Prev</button>
+      <div id="pageInfo" style="font-size:12px;color:var(--muted);font-variant-numeric:tabular-nums"></div>
+      <button id="nextPage" onclick="changePage(1)" style="background:var(--bg3);border:1px solid var(--border);border-radius:8px;padding:8px 16px;color:var(--text);cursor:pointer;font-size:12px;font-weight:600;font-family:inherit;transition:all 0.2s">Next →</button>
     </div>
   </div>
 
@@ -473,6 +478,8 @@
 <script>
 let allEntries = [], allPositions = [], allRisk = {}, allTraders = [], activeTab = 'all';
 let expandedId = null, startTime = 0;
+let currentPage = 1;
+const PAGE_SIZE = 20;
 const pnlHistory = []; // {t: timestamp, v: pnlValue} — tracked client-side across fetches
 const posHistory = []; // {t: timestamp, open: N, closed: N} — position counts over time
 const PNL_HISTORY_MAX = 360; // ~30 min at 5s intervals
@@ -481,6 +488,7 @@ function setTab(el) {
   document.querySelectorAll('.tab').forEach(t => t.classList.remove('active'));
   el.classList.add('active');
   activeTab = el.dataset.f;
+  currentPage = 1;
   renderCards();
 }
 
@@ -741,6 +749,11 @@ function renderPositions(openJournal) {
   document.getElementById('posPanel').innerHTML = h;
 }
 
+function changePage(delta) {
+  currentPage += delta;
+  renderCards();
+}
+
 function renderCards() {
   const filter = document.getElementById('searchBox').value.toLowerCase();
   const entries = allEntries.filter(e => {
@@ -750,13 +763,32 @@ function renderCards() {
     return [e.title, e.market, e.outcome, e.side, e.trader, e.reason, e.source, e.category].join(' ').toLowerCase().includes(filter);
   }).reverse();
 
+  // Pagination
+  const totalPages = Math.max(1, Math.ceil(entries.length / PAGE_SIZE));
+  if (currentPage > totalPages) currentPage = totalPages;
+  if (currentPage < 1) currentPage = 1;
+  const startIdx = (currentPage - 1) * PAGE_SIZE;
+  const pageEntries = entries.slice(startIdx, startIdx + PAGE_SIZE);
+
+  const pagDiv = document.getElementById('paginationControls');
+  if (entries.length > PAGE_SIZE) {
+    pagDiv.style.display = 'flex';
+    document.getElementById('prevPage').disabled = currentPage <= 1;
+    document.getElementById('prevPage').style.opacity = currentPage <= 1 ? '0.4' : '1';
+    document.getElementById('nextPage').disabled = currentPage >= totalPages;
+    document.getElementById('nextPage').style.opacity = currentPage >= totalPages ? '0.4' : '1';
+    document.getElementById('pageInfo').textContent = `Page ${currentPage} of ${totalPages} · ${entries.length} trades`;
+  } else {
+    pagDiv.style.display = 'none';
+  }
+
   if (entries.length === 0) {
     document.getElementById('cardsContainer').innerHTML = '<div class="empty"><div class="emoji">📡</div><div class="msg">No matching trades</div></div>';
     return;
   }
 
   let html = '';
-  for (const e of entries) {
+  for (const e of pageEntries) {
     const isExpanded = expandedId === e.tradeId;
     const isClosed = e.exitPrice != null;
     const pnlVal = e.pnl;
@@ -805,7 +837,6 @@ function renderCards() {
         <div class="detail-section">
           <div class="detail-section-title">Trade</div>
           <div class="detail-grid">
-            <div class="detail-item"><div class="dl">Time</div><div class="dv">${time}</div></div>
             <div class="detail-item"><div class="dl">Trader</div><div class="dv" style="color:var(--cyan);font-family:monospace;font-size:11px" title="${esc(traderFull)}">${esc(trader)}</div></div>
             <div class="detail-item"><div class="dl">Notional</div><div class="dv">${fmt$(notional)}</div></div>
             <div class="detail-item"><div class="dl">Shares</div><div class="dv">${(e.size||0).toFixed(4)}</div></div>
@@ -813,6 +844,10 @@ function renderCards() {
             <div class="detail-item"><div class="dl">Exit Price</div><div class="dv">${e.exitPrice ? '$'+e.exitPrice.toFixed(4) : '—'}</div></div>
             <div class="detail-item"><div class="dl">P&L</div><div class="dv ${pnlClass}">${pnlVal != null ? fmt$(pnlVal) : '—'}</div></div>
             <div class="detail-item"><div class="dl">ROI</div><div class="dv ${pnlClass}">${roi}</div></div>
+            <div class="detail-item"><div class="dl">Trade Time</div><div class="dv">${time}</div></div>
+            ${e.copyTimestamp ? `<div class="detail-item"><div class="dl">Copy Time</div><div class="dv">${new Date(e.copyTimestamp).toLocaleString()}</div></div>` : ''}
+            <div class="detail-item"><div class="dl">Copy Lag</div><div class="dv">${e.copyTimestamp ? fmtTime(e.copyTimestamp - e.timestamp) : '—'}</div></div>
+            ${e.exitTimestamp ? `<div class="detail-item"><div class="dl">Exit Time</div><div class="dv">${new Date(e.exitTimestamp).toLocaleString()}</div></div>` : ''}
             <div class="detail-item"><div class="dl">Hold Time</div><div class="dv">${holdTime}</div></div>
             <div class="detail-item"><div class="dl">Source</div><div class="dv">${esc(e.source||'—')}</div></div>
             <div class="detail-item"><div class="dl">Trade ID</div><div class="dv" style="font-size:11px;color:var(--muted)">${esc(e.tradeId)}</div></div>

@@ -328,6 +328,7 @@ export interface TradeJournalEntry {
   exitTimestamp?: number;
   pnl?: number;
   holdTimeMs?: number;
+  copyTimestamp?: number; // When the bot executed the copy trade (ms since epoch)
   reason: string;
   source: string; // e.g. 'copy-trade', 'signal', 'manual'
   trader?: string; // Target wallet address that triggered this trade
