@@ -234,6 +234,7 @@
   <div class="pill" style="--pill-color:var(--yellow)"><div class="pill-label">Skipped</div><div class="pill-value c-yellow" id="sSkipped">—</div></div>
   <div class="pill" style="--pill-color:var(--red)"><div class="pill-label">Failed</div><div class="pill-value c-red" id="sFailed">—</div></div>
   <div class="pill" style="--pill-color:var(--accent)"><div class="pill-label">Win Rate</div><div class="pill-value c-accent" id="sRate">—</div><div class="pill-sub" id="sRateSub"></div></div>
+  <div class="pill" style="--pill-color:var(--muted)"><div class="pill-label">Copy Rate</div><div class="pill-value" id="sCopyRate">—</div><div class="pill-sub" id="sCopyRateSub"></div></div>
 </div>
 
 <!-- ═══ Risk + Positions ═══ -->
@@ -319,9 +320,20 @@ async function fetchData() {
     document.getElementById('sDetected').textContent = s.tradesDetected || 0;
     document.getElementById('sSkipped').textContent = s.tradesSkipped || 0;
     document.getElementById('sFailed').textContent = s.tradesFailed || 0;
-    const rate = s.tradesDetected > 0 ? ((s.tradesCopied / s.tradesDetected) * 100).toFixed(1) + '%' : '—';
-    document.getElementById('sRate').textContent = rate;
-    document.getElementById('sRateSub').textContent = `${s.tradesCopied || 0} of ${s.tradesDetected || 0}`;
+    // Win Rate — calculated from closed trades (entries with pnl defined)
+    const entries = d.entries || [];
+    const closedTrades = entries.filter(e => e.pnl != null);
+    const wins = closedTrades.filter(e => e.pnl > 0).length;
+    const losses = closedTrades.filter(e => e.pnl < 0).length;
+    const winRate = (wins + losses) > 0 ? ((wins / (wins + losses)) * 100).toFixed(1) + '%' : '—';
+    const rateEl = document.getElementById('sRate');
+    rateEl.textContent = winRate;
+    rateEl.className = 'pill-value ' + (closedTrades.length > 0 ? (wins >= losses ? 'c-green' : 'c-red') : 'c-accent');
+    document.getElementById('sRateSub').textContent = closedTrades.length > 0 ? `${wins}W / ${losses}L · ${closedTrades.length} trades` : 'No closed trades yet';
+    // Copy Rate — how many detected trades were actually copied
+    const copyRate = s.tradesDetected > 0 ? ((s.tradesCopied / s.tradesDetected) * 100).toFixed(1) + '%' : '—';
+    document.getElementById('sCopyRate').textContent = copyRate;
+    document.getElementById('sCopyRateSub').textContent = `${s.tradesCopied || 0} of ${s.tradesDetected || 0}`;
 
     // Risk
     allRisk = d.risk || {};
