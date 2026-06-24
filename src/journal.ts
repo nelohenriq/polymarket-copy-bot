@@ -83,6 +83,14 @@ export class TradeJournal {
   }
 
   /**
+   * Find the open position entry for a given tokenId (without closing it).
+   * Used to access entry details before recordExit removes it from the map.
+   */
+  findOpenPosition(tokenId: string): TradeJournalEntry | undefined {
+    return this.openPositions.get(tokenId);
+  }
+
+  /**
    * Get open positions (entries without exits).
    */
   getOpenPositions(): TradeJournalEntry[] {

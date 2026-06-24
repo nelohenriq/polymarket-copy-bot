@@ -262,8 +262,24 @@ async function main(): Promise<void> {
 
     // Record SELL as exit in journal (all modes with a journal — must run BEFORE BUY-only filter)
     if (trade.side === 'SELL' && journal) {
+      const exitEntry = journal.findOpenPosition(trade.tokenId);
       journal.recordExit(trade.tokenId, trade.price, trade.timestamp);
-      if (paperMode) {
+      if (exitEntry) {
+        const exitPnl = exitEntry.pnl ?? 0;
+        const holdMs = exitEntry.holdTimeMs ?? (trade.timestamp - exitEntry.timestamp);
+        const holdLabel = holdMs > 86_400_000 ? `${(holdMs / 86_400_000).toFixed(1)}d`
+          : holdMs > 3_600_000 ? `${(holdMs / 3_600_000).toFixed(1)}h`
+          : `${(holdMs / 60_000).toFixed(0)}m`;
+        const emoji = exitPnl >= 0 ? '✅' : '❌';
+        log.info(`${emoji} [EXIT] ${exitEntry.outcome} | P&L: $${exitPnl.toFixed(2)} | Hold: ${holdLabel} | Exit: $${trade.price}`);
+        telegram?.notifyTrade({
+          side: 'SELL',
+          size: exitEntry.size,
+          price: trade.price,
+          outcome: exitEntry.outcome,
+          user: exitEntry.trader || 'unknown',
+        });
+      } else if (paperMode) {
         log.info(`[PAPER] Exit recorded: ${trade.outcome} @ $${trade.price}`);
       }
       if (config.dryRun || paperMode) {
@@ -271,8 +287,8 @@ async function main(): Promise<void> {
       }
     }
 
-    // In non-paper mode, skip SELL trades for execution (BUY-only mode)
-    if (trade.side === 'SELL' && !paperMode) {
+    // Skip SELL trades for execution (BUY-only mode — exits are recorded above via recordExit)
+    if (trade.side === 'SELL') {
       log.debug(`Skipping SELL trade from ${trade.user.slice(0, 8)}... (BUY-only mode)`);
       stats.tradesSkipped++;
       return;
