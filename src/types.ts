@@ -63,6 +63,16 @@ export interface BotConfig {
   stateFilePath?: string;
   /** Auto-close on-chain positions when catch-up replay detects a missed SELL within deviation threshold */
   autoCloseOnCatchUp?: boolean;
+  /** Order type for auto-close orders during catch-up (defaults to ORDER_TYPE if unset) */
+  autoCloseOrderType?: CopyOrderType;
+  /** Timeout in ms for resting GTC auto-close orders before cancel + FOK retry (default: 300000 = 5 min) */
+  autoCloseGtcTimeoutMs?: number;
+  /** Enable periodic market resolution detection for open positions */
+  resolutionCheckEnabled?: boolean;
+  /** Auto-redeem winning ERC1155 tokens via CTF redeemPositions (requires wallet to hold tokens directly) */
+  autoRedeemEnabled?: boolean;
+  /** Interval in ms for checking market resolution status (default: 600000 = 10 min) */
+  resolutionCheckIntervalMs?: number;
 }
 
 export type CopyOrderType = 'FOK' | 'GTC' | 'FAK';

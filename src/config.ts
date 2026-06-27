@@ -96,6 +96,11 @@ export function loadConfig(allowMissingKey = false): BotConfig {
     throw new Error('TARGET_WALLETS must contain at least one wallet address (or enable AUTO_DISCOVER_WALLETS)');
   }
 
+  const autoCloseOrderType = optionalEnv('AUTO_CLOSE_ORDER_TYPE', orderType) as CopyOrderType;
+  if (!VALID_ORDER_TYPES.includes(autoCloseOrderType)) {
+    throw new Error(`Invalid AUTO_CLOSE_ORDER_TYPE: ${autoCloseOrderType}. Must be one of: ${VALID_ORDER_TYPES.join(', ')}`);
+  }
+
   const config: BotConfig = {
     privateKey: resolvePrivateKey(allowMissingKey),
     targetWallets,
@@ -125,6 +130,11 @@ export function loadConfig(allowMissingKey = false): BotConfig {
     stalePositionWarnDays: parseFloatEnv('STALE_POSITION_WARN_DAYS', 30),
     stateFilePath: process.env['STATE_FILE_PATH'] || 'bot-state.json',
     autoCloseOnCatchUp: parseBoolEnv('AUTO_CLOSE_ON_CATCH_UP', false),
+    autoCloseOrderType,
+    autoCloseGtcTimeoutMs: parseFloatEnv('AUTO_CLOSE_GTC_TIMEOUT_MS', 300_000),
+    resolutionCheckEnabled: parseBoolEnv('RESOLUTION_CHECK_ENABLED', false),
+    autoRedeemEnabled: parseBoolEnv('AUTO_REDEEM_ENABLED', false),
+    resolutionCheckIntervalMs: parseFloatEnv('RESOLUTION_CHECK_INTERVAL_MS', 600_000),
   };
 
   return config;
@@ -346,7 +356,16 @@ export function printConfig(config: BotConfig): void {
   console.log(`   State persistence: ${config.stateFilePath || 'bot-state.json'}`);
   console.log(`   Missed sell deviation: ${((config.maxMissedSellDeviation ?? 0.15) * 100).toFixed(0)}%`);
   console.log(`   Auto-close on catch-up: ${config.autoCloseOnCatchUp ? '✅ ENABLED' : 'disabled'}`);
+  if (config.autoCloseOnCatchUp) {
+    console.log(`   Auto-close order type: ${config.autoCloseOrderType || config.orderType}`);
+    console.log(`   Auto-close GTC timeout: ${((config.autoCloseGtcTimeoutMs ?? 300_000) / 1000).toFixed(0)}s`);
+  }
   console.log(`   Stale position warn:  ${config.stalePositionWarnDays ?? 30} days`);
+  console.log(`   Resolution check:     ${config.resolutionCheckEnabled ? '✅ ENABLED' : 'disabled'}`);
+  if (config.resolutionCheckEnabled) {
+    console.log(`   Auto-redeem:          ${config.autoRedeemEnabled ? '✅ ENABLED' : 'disabled'}`);
+    console.log(`   Resolution interval:  ${(config.resolutionCheckIntervalMs ?? 600_000) / 1000}s`);
+  }
   console.log('');
 }
 

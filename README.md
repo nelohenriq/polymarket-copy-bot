@@ -182,12 +182,18 @@ The AI filter evaluates each trade signal before copying:
 | `MAX_TRADE_SIZE` | — | `100` | Max single trade in USDC |
 | `MIN_TRADE_SIZE` | — | `1` | Min trade size in USDC |
 | `ORDER_TYPE` | — | `FOK` | Order type (FOK/GTC/FAK) |
+| `AUTO_CLOSE_ORDER_TYPE` | — | _(same as ORDER_TYPE)_ | Order type for catch-up auto-close orders (FOK/GTC/FAK) |
 | `SLIPPAGE_TOLERANCE` | — | `0.02` | Slippage tolerance (2%) |
 | `MAX_SESSION_NOTIONAL` | — | `1000` | Max total session volume |
 | `MAX_PER_MARKET_NOTIONAL` | — | `200` | Max exposure per market |
 | `DAILY_LOSS_LIMIT` | — | `0.05` | Daily loss limit (5%) |
 | `MAX_DRAWDOWN` | — | `0.25` | Max drawdown from peak (25%) |
 | `TOTAL_LOSS_LIMIT` | — | `0.40` | Permanent halt threshold (40%) |
+| `MAX_SESSION_PROFIT` | — | `0` | Profit target — stop copying when reached (0 = disabled) |
+| `AUTO_CLOSE_ON_CATCH_UP` | — | `false` | Auto-close positions via CLOB during catch-up replay |
+| `MAX_MISSED_SELL_DEVIATION` | — | `0.15` | Max price deviation before blocking auto-close (15%) |
+| `STALE_POSITION_WARN_DAYS` | — | `30` | Days before a position triggers a stale warning |
+| `STATE_FILE_PATH` | — | `bot-state.json` | Path to state file for position persistence across restarts |
 | `AI_FILTER_ENABLED` | — | `false` | Enable AI trade filtering |
 | `AI_FILTER_PROVIDER` | — | `openai` | LLM provider (openai/anthropic/openrouter/custom) |
 | `AI_FILTER_API_KEY` | — | — | LLM API key |
@@ -201,6 +207,9 @@ The AI filter evaluates each trade signal before copying:
 | `LEADERBOARD_MAX_WALLETS` | — | `5` | Max wallets to copy-trade |
 | `DRY_RUN` | — | `true` | Simulation mode (no real orders) |
 | `LOG_LEVEL` | — | `info` | Log level (debug/info/warn/error) |
+| `RESOLUTION_CHECK_ENABLED` | — | `false` | Detect market resolutions for open positions |
+| `AUTO_REDEEM_ENABLED` | — | `false` | Auto-redeem winning ERC1155 tokens via CTF (requires wallet to hold tokens directly) |
+| `RESOLUTION_CHECK_INTERVAL_MS` | — | `600000` | Resolution check interval in ms (10 min) |
 
 See `.env.example` for the full list with documentation.
 

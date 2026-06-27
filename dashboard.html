@@ -963,8 +963,26 @@ function renderRecon(rc, cfg) {
     if (rc.catchUpMissedSells > 0) {
       h += `<div class="recon-item"><span class="rl">Missed Exits</span><span class="rv c-green">${rc.catchUpMissedSells} processed</span></div>`;
     }
+
+    if (rc.catchUpAutoCloses > 0) {
+      h += `<div class="recon-item"><span class="rl">Auto-Closed</span><span class="rv c-green">${rc.catchUpAutoCloses} filled ✓</span></div>`;
+    }
+    if (rc.catchUpAutoCloseFails > 0) {
+      h += `<div class="recon-item"><span class="rl">Auto-Close Fails</span><span class="rv c-red">${rc.catchUpAutoCloseFails} failed ✗</span></div>`;
+    }
     if (rc.catchUpDeviationBlocks > 0) {
       h += `<div class="recon-item"><span class="rl">Price Blocks</span><span class="rv c-red">${rc.catchUpDeviationBlocks} blocked</span></div>`;
+    }
+    if (rc.pendingGtcOrders > 0) {
+      h += `<div class="recon-item"><span class="rl">Pending GTC</span><span class="rv c-yellow">${rc.pendingGtcOrders} ⏳</span></div>`;
+    }
+    if (rc.catchUpGtcTimeouts > 0) {
+      h += `<div class="recon-item"><span class="rl">GTC Timeouts</span><span class="rv c-orange">${rc.catchUpGtcTimeouts}</span></div>`;
+    }
+    if (rc.catchUpFokRetries > 0) {
+      const retryLabel = rc.catchUpFokRetryFails > 0
+        ? `${rc.catchUpFokRetries - rc.catchUpFokRetryFails}/${rc.catchUpFokRetries} ok` : `${rc.catchUpFokRetries} ok`;
+      h += `<div class="recon-item"><span class="rl">FOK Retries</span><span class="rv ${rc.catchUpFokRetryFails > 0 ? 'c-yellow' : 'c-green'}">${retryLabel}</span></div>`;
     }
   }
 
@@ -980,6 +998,13 @@ function renderRecon(rc, cfg) {
   if (rc.onChainVerified) {
     h += `<div class="recon-item"><span class="rl">On-Chain</span><span class="rv ${rc.onChainMismatched > 0 ? 'c-yellow' : 'c-green'}">${rc.onChainMatched} matched${rc.onChainMismatched > 0 ? ', ' + rc.onChainMismatched + ' mismatched' : ''}</span></div>`;
   }
+  if (rc.marketsResolved > 0) {
+    h += `<div class="recon-item"><span class="rl">Resolved</span><span class="rv c-green">${rc.marketsResolved} market(s)</span></div>`;
+    h += `<div class="recon-item"><span class="rl">Won / Lost</span><span class="rv"><span class="c-green">${rc.positionsWon}W</span> · <span class="c-red">${rc.positionsLost}L</span></span></div>`;
+    if (rc.redemptionAttempts > 0) {
+      h += `<div class="recon-item"><span class="rl">Redeemed</span><span class="rv ${rc.redemptionFailures > 0 ? 'c-yellow' : 'c-green'}">${rc.redemptionSuccesses}/${rc.redemptionAttempts} ok</span></div>`;
+    }
+  }
   h += '</div>';
 
   // Status alerts
@@ -987,9 +1012,13 @@ function renderRecon(rc, cfg) {
     h += '<div class="recon-alert warn">⏸️ Exit-only mode — BUY trades paused until positions close</div>';
   } else  // Editable deviation setting
   const devPct = ((cfg?.maxMissedSellDeviation ?? 0.15) * 100).toFixed(0);
+  const currentOType = cfg?.autoCloseOrderType || 'FOK';
+  h += `<div class="recon-item"><span class="rl">Close Order Type</span><span class="rv"><select id="closeOrderSelect" style="background:var(--bg3);border:1px solid var(--border);color:var(--text);padding:3px 8px;border-radius:6px;font-size:11px;font-weight:600;font-family:inherit;cursor:pointer;accent-color:var(--accent)" onchange="updateCloseOrderType(this.value)">${['FOK','GTC','FAK'].map(o => `<option value="${o}"${o===currentOType?' selected':''}>${o}</option>`).join('')}</select></span></div>`;
   h += `<div class="recon-item" style="margin-top:8px;padding-top:8px;border-top:1px solid var(--border)"><span class="rl">Deviation Limit</span><span class="rv"><input type="range" id="deviationSlider" min="5" max="50" value="${devPct}" style="width:80px;vertical-align:middle;accent-color:var(--accent)" onchange="updateDeviation(this.value)"> <span id="deviationValue">${devPct}%</span></span></div>`;
 
-  if (rc.catchUpDeviationBlocks > 0) {
+  if (rc.catchUpAutoCloseFails > 0) {
+    h += '<div class="recon-alert warn">❌ ' + rc.catchUpAutoCloseFails + ' auto-close order(s) failed — positions left open for retry</div>';
+  } else if (rc.catchUpDeviationBlocks > 0) {
     h += '<div class="recon-alert warn">⚠️ Price deviation blocked auto-close on ' + rc.catchUpDeviationBlocks + ' position(s) — manual review needed</div>';
   } else if (rc.stalePositionCount > 0) {
     h += '<div class="recon-alert warn">⏰ ' + rc.stalePositionCount + ' stale position(s) held >30 days</div>';
@@ -1015,6 +1044,17 @@ async function updateDeviation(pct) {
     });
     if (!r.ok) console.error('Failed to update deviation');
   } catch (e) { console.error('Failed to update deviation', e); }
+}
+
+async function updateCloseOrderType(type) {
+  try {
+    const r = await fetch('/api/config', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ autoCloseOrderType: type }),
+    });
+    if (!r.ok) console.error('Failed to update close order type');
+  } catch (e) { console.error('Failed to update close order type', e); }
 }
 
 // ── Sparkline Tooltip Engine ──

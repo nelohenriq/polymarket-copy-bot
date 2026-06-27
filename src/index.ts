@@ -44,6 +44,7 @@ import { MetricsCalculator } from './metrics';
 import { AITradeFilter } from './ai-filter';
 import { LeaderboardScraper } from './leaderboard';
 import { OnChainMonitor, verifyOnChainBalances } from './onchain';
+import { MarketResolver } from './resolver';
 import { TelegramNotifier } from './telegram';
 import { MarketIntelligence, formatIntelligenceForPrompt } from './intelligence';
 import { log, setLogLevel } from './logger';
@@ -326,6 +327,23 @@ async function main(): Promise<void> {
 
   // ── Runtime-adjustable settings ──
   let runtimeMaxMissedSellDeviation = config.maxMissedSellDeviation ?? 0.15;
+  let runtimeAutoCloseOrderType: import('./types').CopyOrderType = config.autoCloseOrderType || config.orderType;
+
+  // ── Pending GTC auto-close order tracking ──
+  // When GTC is used for auto-close, orders rest on the book and may not fill.
+  // Track them here so the periodic checker can cancel + retry with FOK on timeout.
+  const pendingGtcAutoCloses: Array<{
+    orderId: string;
+    tokenId: string;
+    outcome: string;
+    shares: number;
+    exitPrice: number;
+    entryPrice: number;
+    placedAt: number;
+    journalAsset: string;
+    journalExitTs: number;
+    trader: string;
+  }> = [];
 
   // ── Mode tracking ──
   let notionalCappedLogged = false;
@@ -341,6 +359,10 @@ async function main(): Promise<void> {
     catchUpAutoCloses: 0,
     catchUpAutoCloseFails: 0,
     catchUpDeviationBlocks: 0,
+    catchUpGtcTimeouts: 0,
+    catchUpFokRetries: 0,
+    catchUpFokRetryFails: 0,
+    pendingGtcOrders: 0,
     stalePositionCount: 0,
     stalePositions: [] as string[],
     openOrdersChecked: 0,
@@ -349,6 +371,12 @@ async function main(): Promise<void> {
     onChainMatched: 0,
     onChainMismatched: 0,
     onChainMismatches: [] as string[],
+    marketsResolved: 0,
+    positionsWon: 0,
+    positionsLost: 0,
+    redemptionAttempts: 0,
+    redemptionSuccesses: 0,
+    redemptionFailures: 0,
     mode: 'normal' as 'normal' | 'exit-only' | 'profit-shutdown',
   };
 
@@ -622,6 +650,7 @@ async function main(): Promise<void> {
 
       let missedSells = 0;
       let priceDeviationBlocks = 0;
+      const catchUpClosedPositions: Array<{ outcome: string; pnl: number; exitPrice: number; entryPrice: number; size: number; autoClosed: boolean }> = [];
       reconciliation.catchUpRan = true;
       const maxDeviation = runtimeMaxMissedSellDeviation;
 
@@ -689,11 +718,30 @@ async function main(): Promise<void> {
                 if (config.autoCloseOnCatchUp && clob && !config.dryRun) {
                   try {
                     log.info(`🔄 [AUTO-CLOSE] Placing SELL order: ${openPos.outcome.slice(0, 30)} | ${openPos.size.toFixed(4)} shares @ $${exitPrice.toFixed(4)}`);
-                    const closeResult = await executor.executeCloseOrder(openPos.tokenId, openPos.size, exitPrice);
+                    const closeResult = await executor.executeCloseOrder(openPos.tokenId, openPos.size, exitPrice, runtimeAutoCloseOrderType);
                     if (closeResult.success) {
-                      reconciliation.catchUpAutoCloses++;
-                      log.success(`✅ [AUTO-CLOSE] Order filled: ${closeResult.orderId} | ${closeResult.copyShares.toFixed(4)} shares @ $${closeResult.price.toFixed(4)}`);
-                      telegram?.notifyExecution({ side: 'SELL', shares: closeResult.copyShares, price: closeResult.price, notional: closeResult.copyNotional, orderId: closeResult.orderId ?? '', outcome: openPos.outcome });
+                      if (runtimeAutoCloseOrderType === 'GTC') {
+                        // GTC orders rest on the book — track as pending until filled or timeout
+                        clobCloseSuccess = false; // Don't record journal exit yet
+                        pendingGtcAutoCloses.push({
+                          orderId: closeResult.orderId!,
+                          tokenId: openPos.tokenId,
+                          outcome: openPos.outcome,
+                          shares: openPos.size,
+                          exitPrice: closeResult.price,
+                          entryPrice,
+                          placedAt: Date.now(),
+                          journalAsset: raw.asset,
+                          journalExitTs: tradeTs,
+                          trader: openPos.trader || 'unknown',
+                        });
+                        reconciliation.pendingGtcOrders = pendingGtcAutoCloses.length;
+                        log.info(`⏳ [AUTO-CLOSE] GTC order posted: ${closeResult.orderId} | ${openPos.outcome.slice(0, 30)} — waiting to fill or timeout`);
+                      } else {
+                        reconciliation.catchUpAutoCloses++;
+                        log.success(`✅ [AUTO-CLOSE] Order filled: ${closeResult.orderId} | ${closeResult.copyShares.toFixed(4)} shares @ $${closeResult.price.toFixed(4)}`);
+                        telegram?.notifyExecution({ side: 'SELL', shares: closeResult.copyShares, price: closeResult.price, notional: closeResult.copyNotional, orderId: closeResult.orderId ?? '', outcome: openPos.outcome });
+                      }
                     } else {
                       clobCloseSuccess = false;
                       reconciliation.catchUpAutoCloseFails++;
@@ -712,17 +760,27 @@ async function main(): Promise<void> {
                 if (clobCloseSuccess) {
                   journal.recordExit(raw.asset, exitPrice, tradeTs);
                   missedSells++;
-                  const exitPnl = openPos.pnl ?? 0;
+
+                  // Compute P&L directly — openPos.pnl is stale (from before recordExit)
+                  const catchUpPnl = (exitPrice - entryPrice) * openPos.size;
 
                   // Update risk manager: free notional + record P&L
                   riskManager.reduceSessionNotional(openPos.entryPrice * openPos.size);
-                  riskManager.addSessionPnl(exitPnl);
+                  riskManager.addSessionPnl(catchUpPnl);
 
-                  const emoji = exitPnl >= 0 ? '✅' : '❌';
-                log.info(
-                  `${emoji} [CATCH-UP EXIT] ${openPos.outcome.slice(0, 30)} | ` +
-                  `P&L: $${exitPnl.toFixed(2)} | Exit: $${exitPrice.toFixed(4)}`
-                );
+                  catchUpClosedPositions.push({
+                    outcome: openPos.outcome,
+                    pnl: catchUpPnl,
+                    exitPrice,
+                    entryPrice,
+                    size: openPos.size,
+                    autoClosed: config.autoCloseOnCatchUp === true,
+                  });
+                  const emoji = catchUpPnl >= 0 ? '✅' : '❌';
+                  log.info(
+                    `${emoji} [CATCH-UP EXIT] ${openPos.outcome.slice(0, 30)} | ` +
+                    `P&L: $${catchUpPnl.toFixed(2)} | Exit: $${exitPrice.toFixed(4)}`
+                  );
                   telegram?.notifyTrade({
                     side: 'SELL',
                     size: openPos.size,
@@ -758,6 +816,32 @@ async function main(): Promise<void> {
         log.info(`   Catch-up complete: ${missedSells} missed exits processed, ${priceDeviationBlocks} blocked (price deviation), ${openAfter} positions still open`);
       } else {
         log.info(`   Catch-up complete: no missed exits found, ${openAfter} positions still open`);
+      }
+
+      // ── Telegram summary: list all auto-closed positions with P&L ──
+      if (telegram && catchUpClosedPositions.length > 0) {
+        const totalPnl = catchUpClosedPositions.reduce((s, p) => s + p.pnl, 0);
+        const wins = catchUpClosedPositions.filter(p => p.pnl >= 0).length;
+        const losses = catchUpClosedPositions.filter(p => p.pnl < 0).length;
+        const lines = catchUpClosedPositions.map(p => {
+          const icon = p.pnl >= 0 ? '✅' : '❌';
+          return `${icon} ${p.outcome.slice(0, 40)} | P&L: $${p.pnl.toFixed(2)} | Exit: $${p.exitPrice.toFixed(4)}`;
+        });
+        const summary = [
+          `🔄 *Catch-up Summary*`,
+          '',
+          `*Auto-closed:* ${catchUpClosedPositions.length} position(s)`,
+          `*Wins:* ${wins} | *Losses:* ${losses}`,
+          `*Total P&L:* $${totalPnl.toFixed(2)} ${totalPnl >= 0 ? '✅' : '❌'}`,
+          `*Remaining open:* ${openAfter}`,
+          '',
+          ...lines,
+        ].join('\n');
+        telegram.notifyRisk({
+          type: totalPnl >= 0 ? 'blocked' : 'drawdown',
+          message: summary,
+          trade: '',
+        });
       }
 
     }
@@ -940,6 +1024,145 @@ async function main(): Promise<void> {
     }
   }, 3_600_000); // Check every hour
 
+  // ── Step 5g2: Pending GTC auto-close timeout checker (periodic) ──
+  // When GTC is used for auto-close, orders rest on the book. If they don't
+  // fill within the timeout, cancel them and retry with FOK for immediate fill.
+  const gtcTimeoutMs = config.autoCloseGtcTimeoutMs ?? 300_000;
+  const gtcCheckInterval = setInterval(async () => {
+    if (pendingGtcAutoCloses.length === 0 || !clob || config.dryRun) return;
+    const now = Date.now();
+
+    // Check which orders are still open on the CLOB
+    let openOrderIds = new Set<string>();
+    try {
+      const openOrders = await clob.getOpenOrders();
+      const orders = Array.isArray(openOrders) ? openOrders : (openOrders as Record<string, unknown>).data as unknown[] || [];
+      openOrderIds = new Set(orders.map(o => ((o as Record<string, unknown>).id as string) || ((o as Record<string, unknown>).orderID as string) || ((o as Record<string, unknown>).orderId as string) || ''));
+    } catch (err) {
+      log.debug(`GTC check: failed to get open orders: ${err instanceof Error ? err.message : String(err)}`);
+      return;
+    }
+
+    // Process pending orders (iterate backwards since we may splice)
+    for (let i = pendingGtcAutoCloses.length - 1; i >= 0; i--) {
+      const pending = pendingGtcAutoCloses[i];
+
+      if (!openOrderIds.has(pending.orderId)) {
+        // Order no longer open — assume filled
+        pendingGtcAutoCloses.splice(i, 1);
+        reconciliation.catchUpAutoCloses++;
+        reconciliation.pendingGtcOrders = pendingGtcAutoCloses.length;
+
+        // Record journal exit
+        if (journal) {
+          journal.recordExit(pending.journalAsset, pending.exitPrice, pending.journalExitTs);
+          const catchUpPnl = (pending.exitPrice - pending.entryPrice) * pending.shares;
+          riskManager.reduceSessionNotional(pending.entryPrice * pending.shares);
+          riskManager.addSessionPnl(catchUpPnl);
+        }
+
+        log.success(`✅ [GTC FILLED] ${pending.outcome.slice(0, 30)} | Order: ${pending.orderId.slice(0, 12)}…`);
+        telegram?.notifyExecution({ side: 'SELL', shares: pending.shares, price: pending.exitPrice, notional: pending.exitPrice * pending.shares, orderId: pending.orderId, outcome: pending.outcome });
+        persistJournal();
+        continue;
+      }
+
+      // Order still open — check timeout
+      const elapsed = now - pending.placedAt;
+      if (elapsed < gtcTimeoutMs) continue;
+
+      // Timeout reached — cancel and retry with FOK
+      log.warn(`⏰ [GTC TIMEOUT] ${pending.outcome.slice(0, 30)} | ${pending.orderId.slice(0, 12)}… unfilled after ${(elapsed / 1000).toFixed(0)}s — canceling and retrying with FOK`);
+      reconciliation.catchUpGtcTimeouts++;
+
+      try {
+        await clob.cancelOrder({ orderID: pending.orderId });
+        log.info(`[GTC TIMEOUT] Order ${pending.orderId.slice(0, 12)}… canceled`);
+      } catch (cancelErr) {
+        log.warn(`[GTC TIMEOUT] Failed to cancel order ${pending.orderId.slice(0, 12)}…: ${cancelErr instanceof Error ? cancelErr.message : String(cancelErr)}`);
+      }
+
+      // Retry with FOK
+      reconciliation.catchUpFokRetries++;
+      try {
+        const retryResult = await executor.executeCloseOrder(pending.tokenId, pending.shares, pending.exitPrice, 'FOK');
+        if (retryResult.success) {
+          pendingGtcAutoCloses.splice(i, 1);
+          reconciliation.catchUpAutoCloses++;
+          reconciliation.pendingGtcOrders = pendingGtcAutoCloses.length;
+
+          // Record journal exit
+          if (journal) {
+            journal.recordExit(pending.journalAsset, pending.exitPrice, pending.journalExitTs);
+            const catchUpPnl = (pending.exitPrice - pending.entryPrice) * pending.shares;
+            riskManager.reduceSessionNotional(pending.entryPrice * pending.shares);
+            riskManager.addSessionPnl(catchUpPnl);
+          }
+
+          log.success(`✅ [FOK RETRY] ${pending.outcome.slice(0, 30)} | Filled: ${retryResult.copyShares.toFixed(4)} shares @ $${retryResult.price.toFixed(4)}`);
+          telegram?.notifyExecution({ side: 'SELL', shares: retryResult.copyShares, price: retryResult.price, notional: retryResult.copyNotional, orderId: retryResult.orderId ?? '', outcome: pending.outcome });
+          persistJournal();
+        } else {
+          reconciliation.catchUpFokRetryFails++;
+          log.error(`❌ [FOK RETRY FAILED] ${pending.outcome.slice(0, 30)}: ${retryResult.error}`);
+          telegram?.notifyError('FOK Retry Failed', `${pending.outcome.slice(0, 40)}: ${retryResult.error}`);
+        }
+      } catch (retryErr) {
+        reconciliation.catchUpFokRetryFails++;
+        log.error(`❌ [FOK RETRY ERROR] ${pending.outcome.slice(0, 30)}: ${retryErr instanceof Error ? retryErr.message : String(retryErr)}`);
+      }
+    }
+  }, 30_000); // Check every 30 seconds
+
+  // ── Step 5h: Market resolution detection (periodic) ──
+  // Polls the Gamma API to detect when markets with open positions resolve.
+  // For winning positions, optionally redeems ERC1155 tokens via CTF.
+  let resolver: MarketResolver | null = null;
+  let resolutionCheckInterval: ReturnType<typeof setInterval> | null = null;
+  if (config.resolutionCheckEnabled && journal && !backtestMode) {
+    resolver = new MarketResolver({
+      config: {
+        enabled: true,
+        checkIntervalMs: config.resolutionCheckIntervalMs ?? 600_000,
+        autoRedeem: config.autoRedeemEnabled ?? false,
+      },
+      journal,
+      riskManager,
+      wallet,
+      rpcUrl: config.rpcUrl,
+      telegram,
+      onResolution: (result) => {
+        reconciliation.marketsResolved++;
+        if (result.won) {
+          reconciliation.positionsWon++;
+          if (result.redemptionAttempted) {
+            reconciliation.redemptionAttempts++;
+            if (result.redeemed) {
+              reconciliation.redemptionSuccesses++;
+            } else {
+              reconciliation.redemptionFailures++;
+            }
+          }
+        } else {
+          reconciliation.positionsLost++;
+        }
+        persistJournal();
+      },
+    });
+    const checkMs = config.resolutionCheckIntervalMs ?? 600_000;
+    resolutionCheckInterval = setInterval(() => {
+      resolver?.checkResolutions().catch(err => {
+        log.debug(`[RESOLVER] Check failed: ${err instanceof Error ? err.message : String(err)}`);
+      });
+    }, checkMs);
+    // Run initial check after 30s (let the bot start up first)
+    setTimeout(() => {
+      resolver?.checkResolutions().catch(() => {});
+    }, 30_000);
+    log.info(`Resolution check enabled: every ${(checkMs / 1000).toFixed(0)}s` +
+      (config.autoRedeemEnabled ? ' (auto-redeem ON)' : ' (detection only)'));
+  }
+
   // ── Step 6: Start trade monitor ──
   const monitor = new TradeMonitor(config, handleNewTrade);
   await monitor.start();
@@ -1038,6 +1261,7 @@ async function main(): Promise<void> {
             positionMultiplier: config.positionMultiplier,
             targetWallets: config.targetWallets.length,
             maxMissedSellDeviation: runtimeMaxMissedSellDeviation,
+            autoCloseOrderType: runtimeAutoCloseOrderType,
           },
           reconciliation: { ...reconciliation },
         };
@@ -1048,14 +1272,23 @@ async function main(): Promise<void> {
         req.on('end', () => {
           try {
             const update = JSON.parse(body);
+            let updated = false;
             if (typeof update.maxMissedSellDeviation === 'number' && update.maxMissedSellDeviation >= 0 && update.maxMissedSellDeviation <= 1) {
               runtimeMaxMissedSellDeviation = update.maxMissedSellDeviation;
               log.info(`Max missed sell deviation updated to ${(runtimeMaxMissedSellDeviation * 100).toFixed(0)}%`);
+              updated = true;
+            }
+            if (typeof update.autoCloseOrderType === 'string' && ['FOK', 'GTC', 'FAK'].includes(update.autoCloseOrderType)) {
+              runtimeAutoCloseOrderType = update.autoCloseOrderType;
+              log.info(`Auto-close order type updated to ${runtimeAutoCloseOrderType}`);
+              updated = true;
+            }
+            if (updated) {
               res.writeHead(200, { 'Content-Type': 'application/json', 'Access-Control-Allow-Origin': '*' });
-              res.end(JSON.stringify({ ok: true, maxMissedSellDeviation: runtimeMaxMissedSellDeviation }));
+              res.end(JSON.stringify({ ok: true, maxMissedSellDeviation: runtimeMaxMissedSellDeviation, autoCloseOrderType: runtimeAutoCloseOrderType }));
             } else {
               res.writeHead(400, { 'Content-Type': 'application/json', 'Access-Control-Allow-Origin': '*' });
-              res.end(JSON.stringify({ error: 'maxMissedSellDeviation must be a number between 0 and 1' }));
+              res.end(JSON.stringify({ error: 'No valid config fields provided' }));
             }
           } catch {
             res.writeHead(400, { 'Content-Type': 'application/json', 'Access-Control-Allow-Origin': '*' });
@@ -1118,8 +1351,26 @@ async function main(): Promise<void> {
     if (intelligence) intelligence.stop();
     clearInterval(statusInterval);
     clearInterval(staleCheckInterval);
+    clearInterval(gtcCheckInterval);
+    if (resolutionCheckInterval) clearInterval(resolutionCheckInterval);
     clearInterval(persistInterval);
     if (marketRefreshInterval) clearInterval(marketRefreshInterval);
+
+    // Cancel any pending GTC auto-close orders on shutdown
+    if (pendingGtcAutoCloses.length > 0 && clob && !config.dryRun) {
+      log.info(`Canceling ${pendingGtcAutoCloses.length} pending GTC auto-close order(s)...`);
+      for (const pending of pendingGtcAutoCloses) {
+        try {
+          await clob.cancelOrder({ orderID: pending.orderId });
+          log.info(`  Canceled GTC order: ${pending.orderId.slice(0, 12)}… (${pending.outcome.slice(0, 30)})`);
+        } catch (cancelErr) {
+          log.warn(`  Failed to cancel GTC order ${pending.orderId.slice(0, 12)}…: ${cancelErr instanceof Error ? cancelErr.message : String(cancelErr)}`);
+        }
+      }
+      pendingGtcAutoCloses.length = 0;
+      reconciliation.pendingGtcOrders = 0;
+    }
+
     printFinalReport();
 
     // Paper trading: print metrics and optionally export journal

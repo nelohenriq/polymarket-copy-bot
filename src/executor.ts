@@ -129,16 +129,19 @@ export class TradeExecutor {
     notional: number,
     shares: number,
     retries = 2,
+    orderTypeOverride?: CopyOrderType,
   ): Promise<CopyTradeResult> {
     // Fetch order book metadata (tickSize, negRisk) — required by SDK
     const { tickSize, negRisk } = await this.getOrderBookInfo(tokenId);
-    const orderType = this.getOrderType();
+    const resolvedType = orderTypeOverride ? ORDER_TYPE_MAP[orderTypeOverride] : this.getOrderType();
+    if (!resolvedType) throw new Error(`Invalid order type override: ${orderTypeOverride}`);
+    const orderType = resolvedType;
     const side = tradeSide === 'BUY' ? Side.BUY : Side.SELL;
     const useMarketOrder = isMarketOrderType(orderType);
 
     log.debug(
       `Order params: tickSize=${tickSize}, negRisk=${negRisk}, ` +
-      `orderType=${this.config.orderType}, marketOrder=${useMarketOrder}`,
+      `orderType=${orderTypeOverride || this.config.orderType}, marketOrder=${useMarketOrder}`,
     );
 
     for (let attempt = 0; attempt <= retries; attempt++) {
@@ -260,16 +263,17 @@ export class TradeExecutor {
   /**
    * Execute a close (SELL) order for an existing position.
    * Used during catch-up replay to auto-close positions when the target trader
-   * sold while we were offline. Uses FOK for immediate fill.
+   * sold while we were offline. Uses AUTO_CLOSE_ORDER_TYPE (default: FOK).
    */
-  async executeCloseOrder(tokenId: string, shares: number, price: number): Promise<CopyTradeResult> {
+  async executeCloseOrder(tokenId: string, shares: number, price: number, orderTypeOverride?: CopyOrderType): Promise<CopyTradeResult> {
     if (this.config.dryRun) {
       log.success(`[DRY RUN] Would close: SELL ${shares.toFixed(4)} shares @ $${price}`);
       return { success: true, orderId: `dry-run-close-${Date.now()}`, copyNotional: shares * price, copyShares: shares, price, side: 'SELL' };
     }
-    // Use FOK with slippage-adjusted price for immediate fill
+    const closeOrderType = orderTypeOverride || this.config.autoCloseOrderType || this.config.orderType;
     const execPrice = this.calculateExecutionPrice(price, 'SELL');
-    return this.submitOrder(tokenId, 'SELL', execPrice, shares * execPrice, shares, 1);
+    log.info(`[AUTO-CLOSE] Using order type: ${closeOrderType}`);
+    return this.submitOrder(tokenId, 'SELL', execPrice, shares * execPrice, shares, 1, closeOrderType);
   }
 
   private sleep(ms: number): Promise<void> {
