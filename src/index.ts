@@ -377,6 +377,7 @@ async function main(): Promise<void> {
     redemptionAttempts: 0,
     redemptionSuccesses: 0,
     redemptionFailures: 0,
+    resolvedPositions: [] as Array<{ tokenId: string; outcome: string; title: string; won: boolean; redeemed: boolean }>,
     mode: 'normal' as 'normal' | 'exit-only' | 'profit-shutdown',
   };
 
@@ -1143,8 +1144,27 @@ async function main(): Promise<void> {
               reconciliation.redemptionFailures++;
             }
           }
+          // Deduplicate by tokenId
+          if (!reconciliation.resolvedPositions.find(p => p.tokenId === result.tokenId)) {
+            reconciliation.resolvedPositions.push({
+              tokenId: result.tokenId,
+              outcome: result.outcome,
+              title: result.title,
+              won: true,
+              redeemed: result.redeemed,
+            });
+          }
         } else {
           reconciliation.positionsLost++;
+          if (!reconciliation.resolvedPositions.find(p => p.tokenId === result.tokenId)) {
+            reconciliation.resolvedPositions.push({
+              tokenId: result.tokenId,
+              outcome: result.outcome,
+              title: result.title,
+              won: false,
+              redeemed: false,
+            });
+          }
         }
         persistJournal();
       },
@@ -1296,6 +1316,47 @@ async function main(): Promise<void> {
           }
         });
       } else if (reqPath === '/api/config' && req.method === 'OPTIONS') {
+        res.writeHead(204, { 'Access-Control-Allow-Origin': '*', 'Access-Control-Allow-Methods': 'POST, OPTIONS', 'Access-Control-Allow-Headers': 'Content-Type' });
+        res.end();
+      } else if (reqPath === '/api/redeem' && req.method === 'POST') {
+        let body = '';
+        req.on('data', (chunk: Buffer) => { body += chunk.toString(); });
+        req.on('end', async () => {
+          try {
+            const { tokenId } = JSON.parse(body) as { tokenId?: string };
+            if (!tokenId || typeof tokenId !== 'string') {
+              res.writeHead(400, { 'Content-Type': 'application/json', 'Access-Control-Allow-Origin': '*' });
+              res.end(JSON.stringify({ error: 'tokenId is required' }));
+              return;
+            }
+            if (!resolver) {
+              res.writeHead(400, { 'Content-Type': 'application/json', 'Access-Control-Allow-Origin': '*' });
+              res.end(JSON.stringify({ error: 'Resolution check not enabled (set RESOLUTION_CHECK_ENABLED=true)' }));
+              return;
+            }
+            log.info(`[API] Manual redeem requested for token ${tokenId.slice(0, 12)}…`);
+            const result = await resolver.redeemOnDemand(tokenId);
+            if (result.success) {
+              // Only increment attempts if not already counted by auto-redeem
+              const rp = reconciliation.resolvedPositions.find(p => p.tokenId === tokenId);
+              if (!rp?.redeemed) {
+                reconciliation.redemptionAttempts++;
+                reconciliation.redemptionSuccesses++;
+              }
+              if (rp) rp.redeemed = true;
+              persistJournal();
+            } else {
+              reconciliation.redemptionAttempts++;
+              reconciliation.redemptionFailures++;
+            }
+            res.writeHead(result.success ? 200 : 400, { 'Content-Type': 'application/json', 'Access-Control-Allow-Origin': '*' });
+            res.end(JSON.stringify(result));
+          } catch (err) {
+            res.writeHead(400, { 'Content-Type': 'application/json', 'Access-Control-Allow-Origin': '*' });
+            res.end(JSON.stringify({ error: err instanceof Error ? err.message : 'Invalid request' }));
+          }
+        });
+      } else if (reqPath === '/api/redeem' && req.method === 'OPTIONS') {
         res.writeHead(204, { 'Access-Control-Allow-Origin': '*', 'Access-Control-Allow-Methods': 'POST, OPTIONS', 'Access-Control-Allow-Headers': 'Content-Type' });
         res.end();
       } else if (reqPath === '/' || reqPath === '/dashboard.html') {

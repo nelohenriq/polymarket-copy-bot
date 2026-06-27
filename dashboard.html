@@ -1004,6 +1004,19 @@ function renderRecon(rc, cfg) {
     if (rc.redemptionAttempts > 0) {
       h += `<div class="recon-item"><span class="rl">Redeemed</span><span class="rv ${rc.redemptionFailures > 0 ? 'c-yellow' : 'c-green'}">${rc.redemptionSuccesses}/${rc.redemptionAttempts} ok</span></div>`;
     }
+    // Show unredeemed winning positions with "Redeem Now" button
+    const unredeemed = (rc.resolvedPositions || []).filter(p => p.won && !p.redeemed);
+    if (unredeemed.length > 0) {
+      h += '<div style="margin-top:8px;padding-top:8px;border-top:1px solid var(--border)">';
+      h += '<div style="font-size:10px;color:var(--muted);text-transform:uppercase;letter-spacing:1px;font-weight:600;margin-bottom:6px">Awaiting Redemption</div>';
+      for (const pos of unredeemed) {
+        h += `<div style="display:flex;justify-content:space-between;align-items:center;padding:5px 0;border-bottom:1px solid var(--border)">
+          <div style="font-size:11px;font-weight:500;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;max-width:160px" title="${esc(pos.title || pos.outcome)}">${esc((pos.outcome || '').slice(0, 25))}</div>
+          <button onclick="redeemToken('${esc(pos.tokenId)}', this)" style="background:var(--green-bg);color:var(--green);border:1px solid rgba(16,185,129,0.3);border-radius:6px;padding:3px 10px;font-size:10px;font-weight:700;cursor:pointer;font-family:inherit;transition:all 0.2s" onmouseover="this.style.background='var(--green)';this.style.color='#fff'" onmouseout="this.style.background='var(--green-bg)';this.style.color='var(--green)'">Redeem Now</button>
+        </div>`;
+      }
+      h += '</div>';
+    }
   }
   h += '</div>';
 
@@ -1055,6 +1068,56 @@ async function updateCloseOrderType(type) {
     });
     if (!r.ok) console.error('Failed to update close order type');
   } catch (e) { console.error('Failed to update close order type', e); }
+}
+
+async function redeemToken(tokenId, btn) {
+  btn.disabled = true;
+  btn.textContent = 'Redeeming…';
+  btn.style.opacity = '0.6';
+  try {
+    const r = await fetch('/api/redeem', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ tokenId }),
+    });
+    const data = await r.json();
+    if (r.ok && data.success) {
+      btn.textContent = '✅ Redeemed';
+      btn.style.background = 'var(--green)';
+      btn.style.color = '#fff';
+      btn.style.borderColor = 'var(--green)';
+      btn.style.cursor = 'default';
+    } else {
+      btn.textContent = '✗ Failed';
+      btn.style.background = 'var(--red-bg)';
+      btn.style.color = 'var(--red)';
+      btn.style.borderColor = 'rgba(239,68,68,0.3)';
+      btn.disabled = false;
+      btn.title = data.error || 'Redemption failed';
+      console.error('Redeem failed:', data.error);
+      // Reset button after 5s
+      setTimeout(() => {
+        btn.textContent = 'Redeem Now';
+        btn.style.background = 'var(--green-bg)';
+        btn.style.color = 'var(--green)';
+        btn.style.borderColor = 'rgba(16,185,129,0.3)';
+        btn.style.opacity = '1';
+        btn.title = '';
+      }, 5000);
+    }
+  } catch (e) {
+    btn.textContent = '✗ Error';
+    btn.style.background = 'var(--red-bg)';
+    btn.style.color = 'var(--red)';
+    btn.disabled = false;
+    console.error('Redeem error:', e);
+    setTimeout(() => {
+      btn.textContent = 'Redeem Now';
+      btn.style.background = 'var(--green-bg)';
+      btn.style.color = 'var(--green)';
+      btn.style.opacity = '1';
+    }, 5000);
+  }
 }
 
 // ── Sparkline Tooltip Engine ──

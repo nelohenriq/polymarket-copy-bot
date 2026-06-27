@@ -68,7 +68,7 @@ interface CachedMarket {
   lastChecked: number;
 }
 
-interface ResolutionResult {
+export interface ResolutionResult {
   tokenId: string;
   outcome: string;
   title: string;
@@ -470,6 +470,54 @@ export class MarketResolver {
       this.telegram?.notifyError('Redemption Failed', `Failed to redeem winning tokens: ${msg.slice(0, 200)}`);
       return { success: false };
     }
+  }
+
+  /**
+   * On-demand redemption: attempt to redeem a specific resolved winning token.
+   * Called from the dashboard's "Redeem Now" button.
+   * Returns success/failure with details.
+   */
+  async redeemOnDemand(tokenId: string): Promise<{ success: boolean; txHash?: string; error?: string }> {
+    if (!this.ctfContract) {
+      return { success: false, error: 'CTF contract not initialized (check RPC_URL and wallet)' };
+    }
+
+    const cached = this.marketCache.get(tokenId);
+    if (!cached) {
+      return { success: false, error: 'Market data not cached — wait for next resolution check' };
+    }
+
+    if (!cached.resolved) {
+      return { success: false, error: 'Market has not resolved yet' };
+    }
+
+    // Check if this token is a winner
+    let isWinner = false;
+    if (cached.outcomePrices.length > 0 && cached.tokens) {
+      for (let i = 0; i < cached.tokens.length; i++) {
+        if (cached.tokens[i].token_id === tokenId) {
+          isWinner = cached.outcomePrices[i] === 1;
+          break;
+        }
+      }
+    }
+    if (!isWinner && cached.tokens) {
+      const ourToken = cached.tokens.find(t => t.token_id === tokenId);
+      if (ourToken?.winner) isWinner = true;
+    }
+
+    if (!isWinner) {
+      return { success: false, error: 'This position lost — nothing to redeem' };
+    }
+
+    this.stats.redemptionAttempts++;
+    const result = await this.redeemTokens(tokenId, cached);
+    if (result.success) {
+      this.stats.redemptionSuccesses++;
+    } else {
+      this.stats.redemptionFailures++;
+    }
+    return result;
   }
 
   /**
