@@ -646,7 +646,10 @@
         <h2 id="modalStratName">Strategy</h2>
         <div id="modalStratBadge"></div>
       </div>
-      <div class="modal-close" onclick="closeStrategyModal()">✕</div>
+      <div style="display:flex;gap:8px;align-items:center;flex-shrink:0">
+        <button class="compare-btn" onclick="exportStrategyCSV(activeStrategyName)" title="Export strategy data as CSV">📥 CSV</button>
+        <div class="modal-close" onclick="closeStrategyModal()">✕</div>
+      </div>
     </div>
     <div class="modal-body">
       <div class="strat-modal-stats" id="modalStratStats"></div>
@@ -1149,6 +1152,71 @@ function closeStrategyModal(e) {
   document.getElementById('strategyModal').classList.remove('visible');
   document.body.style.overflow = '';
   activeStrategyName = null;
+}
+
+function exportStrategyCSV(name) {
+  if (!name) return;
+  const strategies = _lastStrategies || [];
+  const s = strategies.find(x => x.name === name);
+  if (!s) return;
+
+  const entries = (allEntries || []).filter(e => getStrategyNameFromEntry(e) === name);
+  const closed = entries.filter(e => e.pnl != null);
+  let wins = 0, losses = 0;
+  for (const e of closed) { if (e.pnl > 0) wins++; else if (e.pnl < 0) losses++; }
+
+  // Build CSV content
+  const lines = [];
+  const escCsv = v => {
+    const s = String(v == null ? '' : v);
+    return s.includes(',') || s.includes('"') || s.includes('\n') ? '"' + s.replace(/"/g, '""') + '"' : s;
+  };
+
+  // Summary section
+  lines.push('Strategy Summary');
+  lines.push('Metric,Value');
+  lines.push(['Name', name].map(escCsv).join(','));
+  lines.push(['Status', s.halted ? 'Halted' : 'Active'].map(escCsv).join(','));
+  lines.push(['Session P&L', (s.sessionPnl || 0).toFixed(2)].map(escCsv).join(','));
+  lines.push(['Volume', (s.totalVolume || 0).toFixed(2)].map(escCsv).join(','));
+  lines.push(['Trades Routed', s.tradesRouted || 0].map(escCsv).join(','));
+  lines.push(['Trades Executed', s.tradesExecuted || 0].map(escCsv).join(','));
+  lines.push(['Trades Blocked', s.tradesBlocked || 0].map(escCsv).join(','));
+  lines.push(['Exec Rate', s.tradesRouted > 0 ? ((s.tradesExecuted / s.tradesRouted) * 100).toFixed(1) + '%' : 'N/A'].map(escCsv).join(','));
+  lines.push(['Win Rate', closed.length > 0 ? ((wins / closed.length) * 100).toFixed(1) + '%' : 'N/A'].map(escCsv).join(','));
+  lines.push(['Wins', wins].map(escCsv).join(','));
+  lines.push(['Losses', losses].map(escCsv).join(','));
+  lines.push(['Open Positions', s.openPositions || 0].map(escCsv).join(','));
+  lines.push(['Exposure', (s.sessionNotional || 0).toFixed(2)].map(escCsv).join(','));
+  lines.push('');
+
+  // Trades section
+  lines.push('Trade History');
+  lines.push('Timestamp,Outcome,Side,Entry Price,Exit Price,Size,P&L,ROI,Hold Time,Category,Reason,Trade ID');
+  for (const e of entries.slice().reverse()) {
+    const notional = (e.entryPrice || 0) * (e.size || 0);
+    const roi = (e.pnl != null && notional > 0.01) ? ((e.pnl / notional) * 100).toFixed(2) + '%' : '';
+    const holdTime = e.holdTimeMs != null ? fmtTime(e.holdTimeMs) : '';
+    const ts = e.timestamp ? new Date(e.timestamp).toISOString() : '';
+    lines.push([
+      ts, e.outcome || '', e.side || '',
+      (e.entryPrice || 0).toFixed(4), e.exitPrice != null ? e.exitPrice.toFixed(4) : '',
+      (e.size || 0).toFixed(4), e.pnl != null ? e.pnl.toFixed(2) : '',
+      roi, holdTime, e.category || '', e.reason || '', e.tradeId || ''
+    ].map(escCsv).join(','));
+  }
+
+  // Trigger download
+  const blob = new Blob([lines.join('\n')], { type: 'text/csv;charset=utf-8;' });
+  const url = URL.createObjectURL(blob);
+  const a = document.createElement('a');
+  a.href = url;
+  const safeName = name.replace(/[^a-zA-Z0-9_-]/g, '_');
+  a.download = `strategy_${safeName}_${new Date().toISOString().slice(0,10)}.csv`;
+  document.body.appendChild(a);
+  a.click();
+  document.body.removeChild(a);
+  URL.revokeObjectURL(url);
 }
 
 // ── Strategy Compare Modal ──
