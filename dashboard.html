@@ -324,6 +324,17 @@
   .trader-item { cursor: pointer; }
   .trader-item:hover { background: var(--bg3); }
 
+  /* ── Strategy Modal extras ── */
+  .strat-modal-stats {
+    display: grid; grid-template-columns: repeat(4, 1fr); gap: 10px; margin-bottom: 20px;
+  }
+  @media (max-width: 600px) { .strat-modal-stats { grid-template-columns: repeat(2, 1fr); } }
+  .strat-modal-tags { display: flex; gap: 6px; flex-wrap: wrap; margin-top: 6px; }
+  .strat-modal-tag {
+    font-size: 10px; padding: 3px 10px; border-radius: 6px; font-weight: 600;
+    background: var(--bg); border: 1px solid var(--border);
+  }
+
   /* ── Reconciliation Panel ── */
   .recon-item { display: flex; justify-content: space-between; align-items: center; padding: 6px 0; font-size: 12px; }
   .recon-item:not(:last-child) { border-bottom: 1px solid var(--border); }
@@ -537,6 +548,34 @@
 
 </div><!-- /app -->
 
+<!-- ═══ Strategy Detail Modal ═══ -->
+<div class="modal-overlay" id="strategyModal" onclick="closeStrategyModal(event)">
+  <div class="modal" onclick="event.stopPropagation()">
+    <div class="modal-header">
+      <div>
+        <h2 id="modalStratName">Strategy</h2>
+        <div id="modalStratBadge"></div>
+      </div>
+      <div class="modal-close" onclick="closeStrategyModal()">✕</div>
+    </div>
+    <div class="modal-body">
+      <div class="strat-modal-stats" id="modalStratStats"></div>
+      <div class="modal-section" id="modalStratRoutingSection" style="display:none">
+        <div class="modal-section-title">Routing Rules</div>
+        <div class="strat-modal-tags" id="modalStratRouting"></div>
+      </div>
+      <div class="modal-highlight" id="modalStratHighlights"></div>
+      <div class="modal-section">
+        <div class="modal-section-title">Recent Trades</div>
+        <table class="modal-trades-table">
+          <thead><tr><th>Outcome</th><th>Side</th><th>Price</th><th>P&L</th><th>Time</th></tr></thead>
+          <tbody id="modalStratTradesBody"></tbody>
+        </table>
+      </div>
+    </div>
+  </div>
+</div>
+
 <!-- ═══ Sparkline Tooltip ═══ -->
 <div class="spark-tooltip" id="sparkTooltip">
   <div class="tt-time" id="ttTime"></div>
@@ -573,6 +612,7 @@
 
 <script>
 let allEntries = [], allPositions = [], allRisk = {}, allTraders = [], activeTab = 'all';
+let _lastStrategies = null, _lastRisk = null;
 let expandedId = null, startTime = 0;
 let currentPage = 1;
 const PAGE_SIZE = 20;
@@ -714,7 +754,12 @@ async function fetchData() {
     renderCalibration(d.calibration);
 
     // Multi-Strategy Breakdown
+    _lastStrategies = d.strategies;
+    _lastRisk = d.risk;
     renderStrategies(d.strategies, d.risk);
+
+    // Re-open strategy modal if it was active (keeps data fresh)
+    if (activeStrategyName) openStrategyModal(activeStrategyName);
 
     // Track per-strategy P&L history for sparklines
     if (d.strategies && Array.isArray(d.strategies)) {
@@ -853,7 +898,115 @@ function closeTraderModal(e) {
   document.getElementById('traderModal').classList.remove('visible');
   document.body.style.overflow = '';
 }
-document.addEventListener('keydown', e => { if (e.key === 'Escape') closeTraderModal(); });
+document.addEventListener('keydown', e => { if (e.key === 'Escape') { closeTraderModal(); closeStrategyModal(); } });
+
+// ── Strategy Detail Modal ──
+let activeStrategyName = null;
+
+function openStrategyModal(name) {
+  activeStrategyName = name;
+  const strategies = _lastStrategies || [];
+  const s = strategies.find(x => x.name === name);
+  if (!s) return;
+
+  const risk = _lastRisk || {};
+  const entries = allEntries || [];
+
+  // Header
+  document.getElementById('modalStratName').textContent = name;
+  const isHalted = s.halted;
+  const badgeClass = isHalted ? 'halted' : 'active';
+  const badgeLabel = isHalted ? '🛑 Halted' : '✅ Active';
+  document.getElementById('modalStratBadge').innerHTML = `<span class="strat-badge ${badgeClass}" style="margin-top:4px;display:inline-block">${badgeLabel}</span>`;
+
+  // Stats grid
+  const pnl = s.sessionPnl || 0;
+  const execRate = s.tradesRouted > 0 ? ((s.tradesExecuted / s.tradesRouted) * 100).toFixed(0) : '0';
+  const blockRate = s.tradesRouted > 0 ? ((s.tradesBlocked / s.tradesRouted) * 100).toFixed(0) : '0';
+  const avgTrade = s.tradesExecuted > 0 ? (s.totalVolume / s.tradesExecuted) : 0;
+  document.getElementById('modalStratStats').innerHTML =
+    `<div class="modal-stat"><div class="ms-label">P&L</div><div class="ms-val ${pnl >= 0 ? 'c-green' : 'c-red'}">${fmt$(pnl)}</div></div>` +
+    `<div class="modal-stat"><div class="ms-label">Volume</div><div class="ms-val c-blue">${fmtShort$(s.totalVolume || 0)}</div><div class="ms-sub">avg ${fmt$(avgTrade)}/trade</div></div>` +
+    `<div class="modal-stat"><div class="ms-label">Trades</div><div class="ms-val">${s.tradesRouted || 0}</div><div class="ms-sub">${s.tradesExecuted || 0} exec · ${s.tradesBlocked || 0} blocked</div></div>` +
+    `<div class="modal-stat"><div class="ms-label">Exec Rate</div><div class="ms-val">${execRate}%</div><div class="ms-sub">block ${blockRate}%</div></div>` +
+    `<div class="modal-stat"><div class="ms-label">Open Positions</div><div class="ms-val c-yellow">${s.openPositions || 0}</div></div>` +
+    `<div class="modal-stat"><div class="ms-label">Exposure</div><div class="ms-val c-cyan">${fmt$(s.sessionNotional || 0)}</div></div>`;
+
+  // Win/Loss from journal entries
+  let wins = 0, losses = 0, bestPnl = null, worstPnl = null;
+  const stratEntries = entries.filter(e => getStrategyNameFromEntry(e) === name);
+  const closedEntries = stratEntries.filter(e => e.pnl != null);
+  for (const e of closedEntries) {
+    if (e.pnl > 0) wins++;
+    else if (e.pnl < 0) losses++;
+    if (bestPnl === null || e.pnl > bestPnl) bestPnl = e.pnl;
+    if (worstPnl === null || e.pnl < worstPnl) worstPnl = e.pnl;
+  }
+
+  // Highlights (best/worst)
+  let hlHtml = '';
+  if (closedEntries.length > 0) {
+    const wr = ((wins / closedEntries.length) * 100).toFixed(0);
+    hlHtml += `<div class="modal-highlight-card ${wins >= losses ? 'best' : 'worst'}"><div class="mh-label">Win Rate</div><div class="mh-val ${wins >= losses ? 'c-green' : 'c-red'}">${wr}%</div><div class="mh-id">${wins}W / ${losses}L (${closedEntries.length} trades)</div></div>`;
+  }
+  if (bestPnl !== null && bestPnl > 0) {
+    hlHtml += `<div class="modal-highlight-card best"><div class="mh-label">Best Trade</div><div class="mh-val c-green">${fmt$(bestPnl)}</div></div>`;
+  }
+  if (worstPnl !== null && worstPnl < 0) {
+    hlHtml += `<div class="modal-highlight-card worst"><div class="mh-label">Worst Trade</div><div class="mh-val c-red">${fmt$(worstPnl)}</div></div>`;
+  }
+  document.getElementById('modalStratHighlights').innerHTML = hlHtml;
+
+  // Routing rules — show from strategy data if available
+  const routingSection = document.getElementById('modalStratRoutingSection');
+  const routingDiv = document.getElementById('modalStratRouting');
+  if (s.routing) {
+    const tags = [];
+    if (s.routing.categories) s.routing.categories.forEach(c => tags.push(`Category: ${c}`));
+    if (s.routing.traders) s.routing.traders.forEach(t => tags.push(`Trader: ${t.slice(0,8)}…`));
+    if (s.routing.marketSlugs) s.routing.marketSlugs.forEach(slug => tags.push(`Slug: ${slug}`));
+    if (s.routing.isDefault) tags.push('Default (catch-all)');
+    if (tags.length > 0) {
+      routingSection.style.display = '';
+      routingDiv.innerHTML = tags.map(t => `<span class="strat-modal-tag">${esc(t)}</span>`).join('');
+    } else {
+      routingSection.style.display = 'none';
+    }
+  } else {
+    routingSection.style.display = 'none';
+  }
+
+  // Recent trades table
+  const trades = stratEntries.slice().reverse().slice(0, 30);
+  let tbody = '';
+  if (trades.length === 0) {
+    tbody = '<tr><td colspan="5" style="text-align:center;color:var(--muted);padding:20px">No trades yet</td></tr>';
+  } else {
+    for (const tr of trades) {
+      const pnlCls = tr.pnl != null ? (tr.pnl >= 0 ? 'c-green' : 'c-red') : '';
+      const outcomeShort = (tr.outcome || '').slice(0, 35);
+      const timeAgo = fmtTime(Date.now() - tr.timestamp) + ' ago';
+      tbody += `<tr>
+        <td title="${esc(tr.title || '')}">${esc(outcomeShort)}</td>
+        <td><span class="side-badge ${tr.side === 'BUY' ? 'buy' : 'sell'}">${tr.side}</span></td>
+        <td style="font-variant-numeric:tabular-nums">$${(tr.entryPrice||0).toFixed(4)}</td>
+        <td class="${pnlCls}" style="font-weight:600;font-variant-numeric:tabular-nums">${tr.pnl != null ? fmt$(tr.pnl) : '—'}</td>
+        <td style="color:var(--muted)">${timeAgo}</td>
+      </tr>`;
+    }
+  }
+  document.getElementById('modalStratTradesBody').innerHTML = tbody;
+
+  document.getElementById('strategyModal').classList.add('visible');
+  document.body.style.overflow = 'hidden';
+}
+
+function closeStrategyModal(e) {
+  if (e && e.target !== e.currentTarget) return;
+  document.getElementById('strategyModal').classList.remove('visible');
+  document.body.style.overflow = '';
+  activeStrategyName = null;
+}
 
 function renderPositions(openJournal) {
   const pos = allPositions;
@@ -1268,7 +1421,7 @@ function renderStrategies(strategies, risk) {
       sparkSvg = `<svg id="${sparkId}" width="100%" height="24" data-sname="${esc(s.name)}"></svg>`;
     }
 
-    h += `<div class="strat-card">
+    h += `<div class="strat-card" style="cursor:pointer" onclick="openStrategyModal('${esc(s.name).replace(/'/g, "\\'")}')">
       <div class="strat-header">
         <div class="strat-name">
           <span>${esc(s.name)}</span>
