@@ -565,6 +565,10 @@
         <div class="strat-modal-tags" id="modalStratRouting"></div>
       </div>
       <div class="modal-highlight" id="modalStratHighlights"></div>
+      <div class="modal-section" id="modalStratCatSection" style="display:none">
+        <div class="modal-section-title">Category Performance</div>
+        <div id="modalStratCatBreakdown"></div>
+      </div>
       <div class="modal-section" id="modalStratHistSection" style="display:none">
         <div class="modal-section-title">P&L Distribution</div>
         <svg id="modalStratHist" width="100%" height="120" style="display:block;cursor:crosshair"></svg>
@@ -1006,6 +1010,9 @@ function openStrategyModal(name) {
   }
   document.getElementById('modalStratTradesBody').innerHTML = tbody;
 
+  // Category Performance Breakdown
+  renderStratCategoryBreakdown(stratEntries);
+
   // P&L Distribution Histogram
   renderStratHistogram(closedEntries);
 
@@ -1018,6 +1025,62 @@ function closeStrategyModal(e) {
   document.getElementById('strategyModal').classList.remove('visible');
   document.body.style.overflow = '';
   activeStrategyName = null;
+}
+
+function renderStratCategoryBreakdown(stratEntries) {
+  const section = document.getElementById('modalStratCatSection');
+  const container = document.getElementById('modalStratCatBreakdown');
+  if (!section || !container) return;
+
+  // Group by category
+  const catMap = {};
+  for (const e of stratEntries) {
+    const cat = e.category || 'uncategorized';
+    if (!catMap[cat]) catMap[cat] = { trades: 0, wins: 0, losses: 0, pnl: 0, volume: 0 };
+    catMap[cat].trades++;
+    catMap[cat].volume += (e.entryPrice || 0) * (e.size || 0);
+    if (e.pnl != null) {
+      catMap[cat].pnl += e.pnl;
+      if (e.pnl > 0) catMap[cat].wins++;
+      else if (e.pnl < 0) catMap[cat].losses++;
+    }
+  }
+
+  const cats = Object.entries(catMap).map(([name, d]) => ({ name, ...d }))
+    .sort((a, b) => Math.abs(b.pnl) - Math.abs(a.pnl)); // sort by absolute P&L impact
+
+  if (cats.length === 0) {
+    section.style.display = 'none';
+    return;
+  }
+  section.style.display = '';
+
+  // Find max absolute P&L for bar scaling
+  const maxAbsPnl = Math.max(...cats.map(c => Math.abs(c.pnl)), 0.01);
+
+  let h = '<div style="display:flex;flex-direction:column;gap:8px">';
+  for (const c of cats) {
+    const isWin = c.pnl >= 0;
+    const color = isWin ? 'var(--green)' : 'var(--red)';
+    const barPct = Math.min((Math.abs(c.pnl) / maxAbsPnl) * 100, 100);
+    const closed = c.wins + c.losses;
+    const wr = closed > 0 ? ((c.wins / closed) * 100).toFixed(0) : null;
+
+    h += `<div style="display:flex;align-items:center;gap:10px">
+      <div style="min-width:100px;font-size:12px;font-weight:600;color:${c.name === 'uncategorized' ? 'var(--muted)' : 'var(--text)'};white-space:nowrap;overflow:hidden;text-overflow:ellipsis;font-style:${c.name === 'uncategorized' ? 'italic' : 'normal'}" title="${esc(c.name)}">${esc(c.name)}</div>
+      <div style="flex:1;min-width:0">
+        <div style="display:flex;align-items:center;gap:6px">
+          <div style="flex:1;height:8px;background:var(--bg);border-radius:4px;overflow:hidden;position:relative">
+            <div style="height:100%;width:${barPct.toFixed(0)}%;background:${color};border-radius:4px;transition:width 0.4s ease;opacity:0.8"></div>
+          </div>
+          <div style="min-width:60px;text-align:right;font-size:12px;font-weight:700;font-variant-numeric:tabular-nums;color:${color}">${fmt$(c.pnl)}</div>
+        </div>
+        <div style="font-size:10px;color:var(--muted);margin-top:2px">${c.trades} trades${wr !== null ? ` · ${wr}% WR` : ''} · ${fmtShort$(c.volume)} vol</div>
+      </div>
+    </div>`;
+  }
+  h += '</div>';
+  container.innerHTML = h;
 }
 
 function renderStratHistogram(closedEntries) {
