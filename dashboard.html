@@ -702,7 +702,10 @@
       <div>
         <h2>⚖️ Compare Strategies</h2>
       </div>
-      <div class="modal-close" onclick="closeCompareModal()">✕</div>
+      <div style="display:flex;gap:8px;align-items:center;flex-shrink:0">
+        <button class="compare-btn" onclick="exportCompareCSV()" title="Export comparison as CSV">📥 CSV</button>
+        <div class="modal-close" onclick="closeCompareModal()">✕</div>
+      </div>
     </div>
     <div class="modal-body">
       <div class="compare-selectors">
@@ -1258,6 +1261,74 @@ function swapCompare() {
   leftSel.value = rightSel.value;
   rightSel.value = tmp;
   renderCompare();
+}
+
+function exportCompareCSV() {
+  const strategies = _lastStrategies || [];
+  const leftName = document.getElementById('compareLeft').value;
+  const rightName = document.getElementById('compareRight').value;
+  const left = strategies.find(s => s.name === leftName);
+  const right = strategies.find(s => s.name === rightName);
+  if (!left || !right || leftName === rightName) return;
+
+  const entries = allEntries || [];
+  function getStratStats(name) {
+    const stratEntries = entries.filter(e => getStrategyNameFromEntry(e) === name);
+    const closed = stratEntries.filter(e => e.pnl != null);
+    let wins = 0, losses = 0, totalPnl = 0, bestPnl = null, worstPnl = null, totalHoldMs = 0, holdCount = 0;
+    for (const e of closed) {
+      totalPnl += e.pnl;
+      if (e.pnl > 0) wins++; else if (e.pnl < 0) losses++;
+      if (bestPnl === null || e.pnl > bestPnl) bestPnl = e.pnl;
+      if (worstPnl === null || e.pnl < worstPnl) worstPnl = e.pnl;
+      if (e.holdTimeMs > 0) { totalHoldMs += e.holdTimeMs; holdCount++; }
+    }
+    return { wins, losses, totalPnl, bestPnl, worstPnl, winRate: closed.length > 0 ? wins / closed.length : null, avgHoldMs: holdCount > 0 ? totalHoldMs / holdCount : null };
+  }
+  const ls = getStratStats(leftName);
+  const rs = getStratStats(rightName);
+
+  const escCsv = v => { const s = String(v == null ? '' : v); return s.includes(',') || s.includes('"') || s.includes('\n') ? '"' + s.replace(/"/g, '""') + '"' : s; };
+  const lines = [];
+  lines.push('Strategy Comparison');
+  lines.push(`Generated,${new Date().toISOString()}`);
+  lines.push('');
+
+  lines.push('Metric,' + escCsv(leftName) + ',' + escCsv(rightName) + ',Delta');
+  const rows = [
+    ['Status', left.halted ? 'Halted' : 'Active', right.halted ? 'Halted' : 'Active'],
+    ['Session P&L', (left.sessionPnl || 0).toFixed(2), (right.sessionPnl || 0).toFixed(2)],
+    ['Volume', (left.totalVolume || 0).toFixed(2), (right.totalVolume || 0).toFixed(2)],
+    ['Trades Routed', left.tradesRouted || 0, right.tradesRouted || 0],
+    ['Trades Executed', left.tradesExecuted || 0, right.tradesExecuted || 0],
+    ['Trades Blocked', left.tradesBlocked || 0, right.tradesBlocked || 0],
+    ['Exec Rate', left.tradesRouted > 0 ? ((left.tradesExecuted / left.tradesRouted) * 100).toFixed(1) + '%' : 'N/A', right.tradesRouted > 0 ? ((right.tradesExecuted / right.tradesRouted) * 100).toFixed(1) + '%' : 'N/A'],
+    ['Win Rate', ls.winRate !== null ? (ls.winRate * 100).toFixed(1) + '%' : 'N/A', rs.winRate !== null ? (rs.winRate * 100).toFixed(1) + '%' : 'N/A'],
+    ['Wins', ls.wins, rs.wins],
+    ['Losses', ls.losses, rs.losses],
+    ['Open Positions', left.openPositions || 0, right.openPositions || 0],
+    ['Exposure', (left.sessionNotional || 0).toFixed(2), (right.sessionNotional || 0).toFixed(2)],
+    ['Best Trade', ls.bestPnl !== null ? ls.bestPnl.toFixed(2) : 'N/A', rs.bestPnl !== null ? rs.bestPnl.toFixed(2) : 'N/A'],
+    ['Worst Trade', ls.worstPnl !== null ? ls.worstPnl.toFixed(2) : 'N/A', rs.worstPnl !== null ? rs.worstPnl.toFixed(2) : 'N/A'],
+    ['Avg Hold Time', ls.avgHoldMs !== null ? fmtTime(ls.avgHoldMs) : 'N/A', rs.avgHoldMs !== null ? fmtTime(rs.avgHoldMs) : 'N/A'],
+  ];
+  for (const [label, lv, rv] of rows) {
+    const ln = parseFloat(lv), rn = parseFloat(rv);
+    const delta = !isNaN(ln) && !isNaN(rn) ? (ln - rn).toFixed(2) : '';
+    lines.push([escCsv(label), escCsv(lv), escCsv(rv), escCsv(delta)].join(','));
+  }
+
+  const blob = new Blob([lines.join('\n')], { type: 'text/csv;charset=utf-8;' });
+  const url = URL.createObjectURL(blob);
+  const a = document.createElement('a');
+  a.href = url;
+  const safeL = leftName.replace(/[^a-zA-Z0-9_-]/g, '_');
+  const safeR = rightName.replace(/[^a-zA-Z0-9_-]/g, '_');
+  a.download = `compare_${safeL}_vs_${safeR}_${new Date().toISOString().slice(0,10)}.csv`;
+  document.body.appendChild(a);
+  a.click();
+  document.body.removeChild(a);
+  URL.revokeObjectURL(url);
 }
 
 function renderCompare() {
