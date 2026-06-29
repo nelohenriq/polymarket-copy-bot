@@ -397,6 +397,36 @@
     background: var(--bg); border: 1px solid var(--border); border-radius: 4px;
     padding: 1px 6px; font-size: 9px; font-weight: 600;
   }
+  .strat-pnl-row {
+    display: flex; align-items: center; gap: 12px;
+    margin-bottom: 10px;
+  }
+  .strat-pnl-cell {
+    font-size: 16px; font-weight: 700; font-variant-numeric: tabular-nums;
+  }
+  .strat-spark-wrap {
+    flex: 1; min-width: 0;
+  }
+  .strat-spark-wrap svg { cursor: crosshair; display: block; width: 100%; }
+  .strat-spark-wrap svg .crosshair { stroke: var(--border-light); stroke-width: 0.5; stroke-dasharray: 2,2; }
+  .strat-metrics {
+    display: grid; grid-template-columns: repeat(4, 1fr); gap: 6px;
+    margin-bottom: 8px;
+  }
+  .strat-metric {
+    background: var(--bg); border-radius: 6px; padding: 6px 8px; text-align: center;
+  }
+  .strat-metric .sm-label {
+    font-size: 8px; color: var(--muted); text-transform: uppercase;
+    letter-spacing: 0.7px; font-weight: 600;
+  }
+  .strat-metric .sm-val {
+    font-size: 14px; font-weight: 700; margin-top: 1px;
+    font-variant-numeric: tabular-nums;
+  }
+  .strat-metric .sm-sub {
+    font-size: 9px; color: var(--muted); margin-top: 1px;
+  }
 
   /* ── Sparkline Tooltip ── */
   .spark-tooltip {
@@ -548,6 +578,7 @@ let currentPage = 1;
 const PAGE_SIZE = 20;
 const pnlHistory = []; // {t: timestamp, v: pnlValue} — tracked client-side across fetches
 const posHistory = []; // {t: timestamp, open: N, closed: N} — position counts over time
+const stratPnlHistory = {}; // strategyName -> [{t, v}] — per-strategy P&L tracked client-side
 const PNL_HISTORY_MAX = 360; // ~30 min at 5s intervals
 
 function setTab(el) {
@@ -582,6 +613,11 @@ function fmtShort$(v) {
 }
 function fmtPct(v) { return (v * 100).toFixed(1) + '%'; }
 function esc(s) { return (s||'').replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;'); }
+function getStrategyNameFromEntry(e) {
+  const r = e.reason || '';
+  if (r.startsWith('[') && r.endsWith(']')) return r.slice(1, -1);
+  return null;
+}
 
 function updateUptime() {
   if (!startTime) return;
@@ -679,6 +715,16 @@ async function fetchData() {
 
     // Multi-Strategy Breakdown
     renderStrategies(d.strategies, d.risk);
+
+    // Track per-strategy P&L history for sparklines
+    if (d.strategies && Array.isArray(d.strategies)) {
+      const now = Date.now();
+      for (const s of d.strategies) {
+        if (!stratPnlHistory[s.name]) stratPnlHistory[s.name] = [];
+        stratPnlHistory[s.name].push({ t: now, v: s.sessionPnl || 0 });
+        if (stratPnlHistory[s.name].length > PNL_HISTORY_MAX) stratPnlHistory[s.name].shift();
+      }
+    }
 
     // Position count history for chart
     const openCount = (d.openPositions || []).length;
@@ -1176,9 +1222,23 @@ function renderStrategies(strategies, risk) {
   if (wrap) wrap.style.display = '';
   document.getElementById('stratCount').textContent = `(${strategies.length})`;
 
+  // Compute per-strategy win/loss from journal entries
+  const stratStats = {};
+  for (const e of (allEntries || [])) {
+    const sname = getStrategyNameFromEntry(e);
+    if (!sname) continue;
+    if (!stratStats[sname]) stratStats[sname] = { wins: 0, losses: 0, pnl: 0, bestPnl: null, worstPnl: null };
+    if (e.pnl != null) {
+      stratStats[sname].pnl += e.pnl;
+      if (e.pnl > 0) stratStats[sname].wins++;
+      else if (e.pnl < 0) stratStats[sname].losses++;
+      if (stratStats[sname].bestPnl === null || e.pnl > stratStats[sname].bestPnl) stratStats[sname].bestPnl = e.pnl;
+      if (stratStats[sname].worstPnl === null || e.pnl < stratStats[sname].worstPnl) stratStats[sname].worstPnl = e.pnl;
+    }
+  }
+
   // Global stats for comparison
   const globalNotional = risk?.sessionNotional || 0;
-  const globalPnl = risk?.sessionPnl || 0;
 
   let h = '';
   for (const s of strategies) {
@@ -1189,10 +1249,24 @@ function renderStrategies(strategies, risk) {
     const badgeLabel = isHalted ? '🛑 Halted' : '✅ Active';
     const execRate = s.tradesRouted > 0 ? ((s.tradesExecuted / s.tradesRouted) * 100).toFixed(0) : '0';
     const blockRate = s.tradesRouted > 0 ? ((s.tradesBlocked / s.tradesRouted) * 100).toFixed(0) : '0';
+    const avgTrade = s.tradesExecuted > 0 ? (s.totalVolume / s.tradesExecuted) : 0;
 
     // Notional bar (relative to global total)
     const notionalPct = globalNotional > 0 ? Math.min((s.sessionNotional / globalNotional) * 100, 100) : 0;
     const barColor = s.sessionNotional > 0 ? 'var(--cyan)' : 'var(--muted2)';
+
+    // Win/Loss from journal entries matched to this strategy
+    const ws = stratStats[s.name] || { wins: 0, losses: 0, bestPnl: null, worstPnl: null };
+    const closed = ws.wins + ws.losses;
+    const wr = closed > 0 ? ((ws.wins / closed) * 100).toFixed(0) : null;
+
+    // P&L sparkline (only if we have 2+ data points)
+    const hist = stratPnlHistory[s.name] || [];
+    const sparkId = 'strat-spark-' + s.name.replace(/[^a-zA-Z0-9]/g, '-');
+    let sparkSvg = '';
+    if (hist.length >= 2) {
+      sparkSvg = `<svg id="${sparkId}" width="100%" height="24" data-sname="${esc(s.name)}"></svg>`;
+    }
 
     h += `<div class="strat-card">
       <div class="strat-header">
@@ -1200,48 +1274,82 @@ function renderStrategies(strategies, risk) {
           <span>${esc(s.name)}</span>
           <span class="strat-badge ${badgeClass}">${badgeLabel}</span>
         </div>
-        <div class="strat-pnl" style="color:${pnlColor}">${fmt$(pnl)}</div>
       </div>
-      <div class="strat-stats">
-        <div class="strat-stat">
-          <div class="ss-label">Routed</div>
-          <div class="ss-val">${s.tradesRouted || 0}</div>
-        </div>
-        <div class="strat-stat">
-          <div class="ss-label">Executed</div>
-          <div class="ss-val c-green">${s.tradesExecuted || 0}</div>
-        </div>
-        <div class="strat-stat">
-          <div class="ss-label">Blocked</div>
-          <div class="ss-val c-red">${s.tradesBlocked || 0}</div>
-        </div>
+      <div class="strat-pnl-row">
+        <div class="strat-pnl-cell" style="color:${pnlColor}">${fmt$(pnl)}</div>
+        <div class="strat-spark-wrap">${sparkSvg}</div>
       </div>
-      <div class="strat-stats">
-        <div class="strat-stat">
-          <div class="ss-label">Volume</div>
-          <div class="ss-val c-blue">${fmtShort$(s.totalVolume || 0)}</div>
+      <div class="strat-metrics">
+        <div class="strat-metric">
+          <div class="sm-label">Win Rate</div>
+          <div class="sm-val ${wr !== null ? (parseInt(wr) >= 50 ? 'c-green' : 'c-red') : 'c-muted'}">${wr !== null ? wr + '%' : '—'}</div>
+          <div class="sm-sub">${closed > 0 ? ws.wins + 'W / ' + ws.losses + 'L' : 'no exits'}</div>
         </div>
-        <div class="strat-stat">
-          <div class="ss-label">Open Pos</div>
-          <div class="ss-val c-yellow">${s.openPositions || 0}</div>
+        <div class="strat-metric">
+          <div class="sm-label">Routed</div>
+          <div class="sm-val">${s.tradesRouted || 0}</div>
+          <div class="sm-sub">exec ${execRate}% · blk ${blockRate}%</div>
         </div>
-        <div class="strat-stat">
-          <div class="ss-label">Exposure</div>
-          <div class="ss-val c-cyan">${fmt$(s.sessionNotional || 0)}</div>
+        <div class="strat-metric">
+          <div class="sm-label">Volume</div>
+          <div class="sm-val c-blue">${fmtShort$(s.totalVolume || 0)}</div>
+          <div class="sm-sub">avg ${fmt$(avgTrade)}/trade</div>
+        </div>
+        <div class="strat-metric">
+          <div class="sm-label">Open</div>
+          <div class="sm-val c-yellow">${s.openPositions || 0}</div>
+          <div class="sm-sub">${fmt$(s.sessionNotional || 0)} exp</div>
         </div>
       </div>
+      ${closed > 0 ? `<div style="display:flex;gap:8px;font-size:10px;color:var(--muted);margin-bottom:6px">
+        <span>Best: <span class="c-green">${fmt$(ws.bestPnl || 0)}</span></span>
+        <span>Worst: <span class="c-red">${fmt$(ws.worstPnl || 0)}</span></span>
+      </div>` : ''}
       <div class="strat-bar">
         <div class="strat-bar-fill" style="width:${notionalPct.toFixed(0)}%;background:${barColor}"></div>
       </div>
-      <div style="display:flex;justify-content:space-between;font-size:10px;color:var(--muted);margin-top:4px">
-        <span>Exec: ${execRate}%</span>
-        <span>Block: ${blockRate}%</span>
-        <span>${notionalPct.toFixed(0)}% of global</span>
+      <div style="font-size:10px;color:var(--muted);margin-top:4px;text-align:right">
+        ${notionalPct.toFixed(0)}% of global exposure
       </div>
     </div>`;
   }
 
   panel.innerHTML = h;
+
+  // Render sparklines after DOM update
+  requestAnimationFrame(() => {
+    for (const s of strategies) {
+      const hist = stratPnlHistory[s.name] || [];
+      if (hist.length < 2) continue;
+      const sparkId = 'strat-spark-' + s.name.replace(/[^a-zA-Z0-9]/g, '-');
+      const svg = document.getElementById(sparkId);
+      if (!svg) continue;
+      const W = svg.clientWidth || 160, H = 24, pad = 2;
+      const vals = hist.map(p => p.v);
+      const min = Math.min(...vals, 0), max = Math.max(...vals, 0);
+      const range = max - min || 1;
+      const zeroY = pad + (1 - (0 - min) / range) * (H - pad * 2);
+      const points = hist.map((p, i) => {
+        const x = pad + (i / (hist.length - 1)) * (W - pad * 2);
+        const y = pad + (1 - (p.v - min) / range) * (H - pad * 2);
+        return { x: +x.toFixed(1), y: +y.toFixed(1), p };
+      });
+      const lastVal = vals[vals.length - 1];
+      const color = lastVal >= 0 ? '#10b981' : '#ef4444';
+      const ptStr = points.map(p => `${p.x},${p.y}`).join(' ');
+      const fillPts = ptStr + ` ${W - pad},${zeroY.toFixed(1)} ${pad},${zeroY.toFixed(1)}`;
+      svg.innerHTML =
+        `<line x1="${pad}" y1="${zeroY.toFixed(1)}" x2="${W-pad}" y2="${zeroY.toFixed(1)}" stroke="#1e2d4a" stroke-width="0.5" stroke-dasharray="2,3"/>` +
+        `<polygon points="${fillPts}" fill="${color}" opacity="0.1"/>` +
+        `<polyline points="${ptStr}" fill="none" stroke="${color}" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"/>` +
+        `<circle cx="${points[points.length-1].x}" cy="${points[points.length-1].y}" r="2" fill="${color}"/>` +
+        `<line class="crosshair strat-cross" x1="0" y1="0" x2="0" y2="${H}" style="display:none"/>` +
+        `<circle class="hover-dot strat-hover" cx="0" cy="0" r="3" fill="none" stroke="${color}" stroke-width="1.5" style="display:none"/>`;
+
+      // Sparkline tooltip interaction
+      setupSparklineTooltip(svg, 'strat', points.map(p => ({ x: p.x, y: p.y, data: { v: p.v, t: p.p.t } })), W, H, pad);
+    }
+  });
 }
 
 function renderCalibration(cal) {
@@ -1352,10 +1460,18 @@ function setupSparklineTooltip(svg, chartType, points, W, H, pad) {
       const hover = svg.querySelector('.pnl-hover');
       if (cross) { cross.setAttribute('x1', pt.x); cross.setAttribute('x2', pt.x); cross.style.display = ''; }
       if (hover) { hover.setAttribute('cx', pt.x); hover.setAttribute('cy', pt.y); hover.style.display = ''; }
-      // Tooltip content
       const val = pt.data.v;
       const color = val >= 0 ? 'var(--green)' : 'var(--red)';
       ttBody.innerHTML = `<span class="tt-val" style="color:${color}">${fmt$(val)}</span> <span class="tt-label">P&L</span>`;
+    } else if (chartType === 'strat') {
+      const cross = svg.querySelector('.strat-cross');
+      const hover = svg.querySelector('.strat-hover');
+      if (cross) { cross.setAttribute('x1', pt.x); cross.setAttribute('x2', pt.x); cross.style.display = ''; }
+      if (hover) { hover.setAttribute('cx', pt.x); hover.setAttribute('cy', pt.y); hover.style.display = ''; }
+      const val = pt.data.v;
+      const color = val >= 0 ? 'var(--green)' : 'var(--red)';
+      const sname = svg.dataset.sname || 'Strategy';
+      ttBody.innerHTML = `<div style="font-size:10px;color:var(--muted);margin-bottom:2px">${esc(sname)}</div><span class="tt-val" style="color:${color}">${fmt$(val)}</span> <span class="tt-label">P&L</span>`;
     } else {
       const cross = svg.querySelector('.pos-cross');
       const hoverOpen = svg.querySelector('.pos-hover-open');
