@@ -707,6 +707,7 @@
     <div class="modal-body">
       <div class="compare-selectors">
         <select id="compareLeft" onchange="renderCompare()"></select>
+        <button class="compare-btn" onclick="swapCompare()" title="Swap strategies" style="padding:4px 8px;font-size:12px">⇄</button>
         <span class="vs-label">VS</span>
         <select id="compareRight" onchange="renderCompare()"></select>
       </div>
@@ -1248,6 +1249,15 @@ function closeCompareModal(e) {
   if (e && e.target !== e.currentTarget) return;
   document.getElementById('compareModal').classList.remove('visible');
   document.body.style.overflow = '';
+}
+
+function swapCompare() {
+  const leftSel = document.getElementById('compareLeft');
+  const rightSel = document.getElementById('compareRight');
+  const tmp = leftSel.value;
+  leftSel.value = rightSel.value;
+  rightSel.value = tmp;
+  renderCompare();
 }
 
 function renderCompare() {
