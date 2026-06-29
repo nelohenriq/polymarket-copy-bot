@@ -425,6 +425,42 @@
   }
   .compare-btn:hover { background: var(--accent); color: #fff; border-color: var(--accent); }
 
+  /* ── Strategy Leaderboard ── */
+  .lb-item {
+    padding: 10px 14px; border-bottom: 1px solid var(--border);
+    display: flex; align-items: center; gap: 10px;
+    transition: background 0.15s; cursor: pointer;
+  }
+  .lb-item:last-child { border-bottom: none; }
+  .lb-item:hover { background: var(--bg3); }
+  .lb-rank {
+    font-size: 11px; font-weight: 800; width: 20px; text-align: center;
+    color: var(--muted); flex-shrink: 0;
+  }
+  .lb-rank.gold { color: #f59e0b; }
+  .lb-rank.silver { color: #94a3b8; }
+  .lb-rank.bronze { color: #d97706; }
+  .lb-info { flex: 1; min-width: 0; }
+  .lb-name {
+    font-size: 12px; font-weight: 600; color: var(--text);
+    white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
+  }
+  .lb-meta {
+    font-size: 10px; color: var(--muted); margin-top: 2px;
+    display: flex; gap: 8px;
+  }
+  .lb-pnl {
+    font-size: 13px; font-weight: 700; font-variant-numeric: tabular-nums;
+    flex-shrink: 0; text-align: right;
+  }
+  .lb-bar {
+    height: 3px; background: var(--bg); border-radius: 2px;
+    margin-top: 4px; overflow: hidden;
+  }
+  .lb-bar-fill {
+    height: 100%; border-radius: 2px; transition: width 0.6s ease;
+  }
+
   /* ── Reconciliation Panel ── */
   .recon-item { display: flex; justify-content: space-between; align-items: center; padding: 6px 0; font-size: 12px; }
   .recon-item:not(:last-child) { border-bottom: 1px solid var(--border); }
@@ -628,6 +664,10 @@
   <div class="panel" id="strategiesPanelWrap" style="display:none">
     <div class="panel-head"><span class="icon">⚡</span> Strategy Breakdown <span id="stratCount" style="color:var(--muted);font-weight:400;font-size:11px"></span> <button class="compare-btn" onclick="openCompareModal()" id="compareBtn" style="display:none;margin-left:auto">⚖️ Compare</button></div>
     <div class="panel-body no-pad" id="strategiesPanel"></div>
+  </div>
+  <div class="panel" id="leaderboardPanelWrap" style="display:none">
+    <div class="panel-head"><span class="icon">🏆</span> Strategy Leaderboard</div>
+    <div class="panel-body no-pad" id="leaderboardPanel"></div>
   </div>
   <div class="panel" id="calibrationPanelWrap" style="display:none">
     <div class="panel-head"><span class="icon">🎯</span> AI Calibration</div>
@@ -895,6 +935,9 @@ async function fetchData() {
 
     // AI Calibration
     renderCalibration(d.calibration);
+
+    // Strategy Leaderboard
+    renderLeaderboard(d.strategies, d.risk);
 
     // Multi-Strategy Breakdown
     _lastStrategies = d.strategies;
@@ -2517,6 +2560,72 @@ function renderStrategies(strategies, risk) {
 }
 
 function renderCalibration(cal) {
+function renderLeaderboard(strategies, risk) {
+  const wrap = document.getElementById('leaderboardPanelWrap');
+  const panel = document.getElementById('leaderboardPanel');
+  if (!strategies || !Array.isArray(strategies) || strategies.length < 2) {
+    if (wrap) wrap.style.display = 'none';
+    return;
+  }
+  if (wrap) wrap.style.display = '';
+
+  // Compute per-strategy stats from journal entries
+  const entries = allEntries || [];
+  const stratStats = {};
+  for (const e of entries) {
+    const sname = getStrategyNameFromEntry(e);
+    if (!sname) continue;
+    if (!stratStats[sname]) stratStats[sname] = { wins: 0, losses: 0, pnl: 0, trades: 0 };
+    if (e.pnl != null) {
+      stratStats[sname].pnl += e.pnl;
+      stratStats[sname].trades++;
+      if (e.pnl > 0) stratStats[sname].wins++;
+      else if (e.pnl < 0) stratStats[sname].losses++;
+    }
+  }
+
+  // Build ranking: sort by sessionPnl descending
+  const ranked = strategies
+    .map(s => ({
+      name: s.name,
+      pnl: s.sessionPnl || 0,
+      volume: s.totalVolume || 0,
+      halted: s.halted,
+      openPositions: s.openPositions || 0,
+      ...((stratStats[s.name]) || { wins: 0, losses: 0, trades: 0 }),
+    }))
+    .sort((a, b) => b.pnl - a.pnl);
+
+  const maxAbsPnl = Math.max(...ranked.map(s => Math.abs(s.pnl)), 0.01);
+
+  let h = '';
+  for (let i = 0; i < ranked.length; i++) {
+    const s = ranked[i];
+    const rankClass = i === 0 ? 'gold' : i === 1 ? 'silver' : i === 2 ? 'bronze' : '';
+    const rankIcon = i === 0 ? '\ud83e\udd47' : i === 1 ? '\ud83e\udd48' : i === 2 ? '\ud83e\udd49' : (i + 1);
+    const pnlColor = s.pnl >= 0 ? 'var(--green)' : 'var(--red)';
+    const closed = s.wins + s.losses;
+    const wr = closed > 0 ? ((s.wins / closed) * 100).toFixed(0) + '% WR' : '\u2014';
+    const barPct = (Math.abs(s.pnl) / maxAbsPnl) * 100;
+    const barColor = s.pnl >= 0 ? 'var(--green)' : 'var(--red)';
+
+    h += '<div class="lb-item" onclick="openStrategyModal(\'' + esc(s.name).replace(/'/g, "\'") + '\')">' +
+      '<div class="lb-rank ' + rankClass + '">' + rankIcon + '</div>' +
+      '<div class="lb-info">' +
+        '<div class="lb-name" title="' + esc(s.name) + '">' + esc(s.name) + (s.halted ? ' <span style="color:var(--red);font-size:9px">\u23f8</span>' : '') + '</div>' +
+        '<div class="lb-meta">' +
+          '<span>' + wr + '</span>' +
+          '<span>' + s.trades + ' trades</span>' +
+          '<span>' + fmtShort$(s.volume) + ' vol</span>' +
+        '</div>' +
+        '<div class="lb-bar"><div class="lb-bar-fill" style="width:' + barPct.toFixed(0) + '%;background:' + barColor + '"></div></div>' +
+      '</div>' +
+      '<div class="lb-pnl" style="color:' + pnlColor + '">' + fmt$(s.pnl) + '</div>' +
+    '</div>';
+  }
+  panel.innerHTML = h;
+}
+
   const wrap = document.getElementById('calibrationPanelWrap');
   const panel = document.getElementById('calibrationPanel');
   if (!cal || !cal.totalPredictions || cal.totalPredictions < 2) {
