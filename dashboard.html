@@ -565,6 +565,10 @@
         <div class="strat-modal-tags" id="modalStratRouting"></div>
       </div>
       <div class="modal-highlight" id="modalStratHighlights"></div>
+      <div class="modal-section" id="modalStratHoldSection" style="display:none">
+        <div class="modal-section-title">Hold Time Distribution</div>
+        <div id="modalStratHoldChart"></div>
+      </div>
       <div class="modal-section" id="modalStratCatSection" style="display:none">
         <div class="modal-section-title">Category Performance</div>
         <div id="modalStratCatBreakdown"></div>
@@ -1013,6 +1017,9 @@ function openStrategyModal(name) {
   // Category Performance Breakdown
   renderStratCategoryBreakdown(stratEntries);
 
+  // Hold Time Distribution
+  renderStratHoldTime(closedEntries);
+
   // P&L Distribution Histogram
   renderStratHistogram(closedEntries);
 
@@ -1025,6 +1032,83 @@ function closeStrategyModal(e) {
   document.getElementById('strategyModal').classList.remove('visible');
   document.body.style.overflow = '';
   activeStrategyName = null;
+}
+
+function renderStratHoldTime(closedEntries) {
+  const section = document.getElementById('modalStratHoldSection');
+  const container = document.getElementById('modalStratHoldChart');
+  if (!section || !container) return;
+
+  // Filter entries that have holdTimeMs
+  const withHold = closedEntries.filter(e => e.holdTimeMs != null && e.holdTimeMs > 0);
+  if (withHold.length === 0) {
+    section.style.display = 'none';
+    return;
+  }
+  section.style.display = '';
+
+  // Bucket definitions: [label, maxMs]
+  const buckets = [
+    { label: '<5m', maxMs: 5 * 60_000 },
+    { label: '5-15m', maxMs: 15 * 60_000 },
+    { label: '15-60m', maxMs: 60 * 60_000 },
+    { label: '1-4h', maxMs: 4 * 3600_000 },
+    { label: '4-24h', maxMs: 24 * 3600_000 },
+    { label: '1-7d', maxMs: 7 * 86_400_000 },
+    { label: '7d+', maxMs: Infinity },
+  ];
+
+  // Initialize bucket data
+  const bucketData = buckets.map(b => ({ label: b.label, count: 0, totalPnl: 0, wins: 0, losses: 0 }));
+
+  for (const e of withHold) {
+    const ms = e.holdTimeMs;
+    for (let i = 0; i < buckets.length; i++) {
+      if (ms < buckets[i].maxMs) {
+        bucketData[i].count++;
+        if (e.pnl != null) {
+          bucketData[i].totalPnl += e.pnl;
+          if (e.pnl > 0) bucketData[i].wins++;
+          else if (e.pnl < 0) bucketData[i].losses++;
+        }
+        break;
+      }
+    }
+  }
+
+  // Filter out empty buckets
+  const nonEmpty = bucketData.filter(b => b.count > 0);
+  if (nonEmpty.length === 0) {
+    section.style.display = 'none';
+    return;
+  }
+
+  const maxCount = Math.max(...nonEmpty.map(b => b.count), 1);
+
+  let h = '<div style="display:flex;flex-direction:column;gap:8px">';
+  for (const b of nonEmpty) {
+    const barPct = (b.count / maxCount) * 100;
+    const avgPnl = b.count > 0 ? b.totalPnl / b.count : 0;
+    const isWin = avgPnl >= 0;
+    const color = isWin ? 'var(--green)' : 'var(--red)';
+    const closed = b.wins + b.losses;
+    const wr = closed > 0 ? ((b.wins / closed) * 100).toFixed(0) : null;
+
+    h += `<div style="display:flex;align-items:center;gap:10px">
+      <div style="min-width:55px;font-size:12px;font-weight:600;color:var(--text);text-align:right">${b.label}</div>
+      <div style="flex:1;min-width:0">
+        <div style="display:flex;align-items:center;gap:6px">
+          <div style="flex:1;height:8px;background:var(--bg);border-radius:4px;overflow:hidden">
+            <div style="height:100%;width:${barPct.toFixed(0)}%;background:${color};border-radius:4px;transition:width 0.4s ease;opacity:0.75"></div>
+          </div>
+          <div style="min-width:24px;text-align:right;font-size:12px;font-weight:700;font-variant-numeric:tabular-nums;color:var(--text)">${b.count}</div>
+        </div>
+        <div style="font-size:10px;color:var(--muted);margin-top:2px">avg <span style="color:${color};font-weight:600">${fmt$(avgPnl)}</span>${wr !== null ? ` · ${wr}% WR` : ''}</div>
+      </div>
+    </div>`;
+  }
+  h += '</div>';
+  container.innerHTML = h;
 }
 
 function renderStratCategoryBreakdown(stratEntries) {
