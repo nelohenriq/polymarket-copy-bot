@@ -565,6 +565,15 @@
         <div class="strat-modal-tags" id="modalStratRouting"></div>
       </div>
       <div class="modal-highlight" id="modalStratHighlights"></div>
+      <div class="modal-section" id="modalStratHistSection" style="display:none">
+        <div class="modal-section-title">P&L Distribution</div>
+        <svg id="modalStratHist" width="100%" height="120" style="display:block;cursor:crosshair"></svg>
+        <div style="display:flex;justify-content:space-between;font-size:9px;color:var(--muted);margin-top:2px">
+          <span>← Losses</span>
+          <span id="modalStratHistLabel" style="font-weight:600"></span>
+          <span>Wins →</span>
+        </div>
+      </div>
       <div class="modal-section">
         <div class="modal-section-title">Recent Trades</div>
         <table class="modal-trades-table">
@@ -997,6 +1006,9 @@ function openStrategyModal(name) {
   }
   document.getElementById('modalStratTradesBody').innerHTML = tbody;
 
+  // P&L Distribution Histogram
+  renderStratHistogram(closedEntries);
+
   document.getElementById('strategyModal').classList.add('visible');
   document.body.style.overflow = 'hidden';
 }
@@ -1006,6 +1018,95 @@ function closeStrategyModal(e) {
   document.getElementById('strategyModal').classList.remove('visible');
   document.body.style.overflow = '';
   activeStrategyName = null;
+}
+
+function renderStratHistogram(closedEntries) {
+  const section = document.getElementById('modalStratHistSection');
+  const svg = document.getElementById('modalStratHist');
+  const label = document.getElementById('modalStratHistLabel');
+  if (!section || !svg || closedEntries.length === 0) {
+    if (section) section.style.display = 'none';
+    return;
+  }
+  // Sort by P&L: losses (red) on left, wins (green) on right
+  const sorted = closedEntries.slice().sort((a, b) => a.pnl - b.pnl);
+  const pnls = sorted.map(e => e.pnl);
+  const maxAbs = Math.max(Math.abs(Math.min(...pnls)), Math.abs(Math.max(...pnls)), 0.01);
+
+  // Show section + render in next frame so clientWidth is non-zero
+  requestAnimationFrame(() => {
+  section.style.display = '';
+  const W = svg.clientWidth || 600, H = 120, padX = 8, padY = 6;
+  const barCount = sorted.length;
+  const gap = Math.max(1, Math.min(3, Math.floor((W - padX * 2) / barCount * 0.15)));
+  const barW = Math.max(2, (W - padX * 2 - gap * (barCount - 1)) / barCount);
+  const maxBarH = H - padY * 2 - 14; // leave room for value labels
+  let rects = '';
+  const tooltip = document.getElementById('sparkTooltip');
+  const ttTime = document.getElementById('ttTime');
+  const ttBody = document.getElementById('ttBody');
+
+  for (let i = 0; i < barCount; i++) {
+    const pnl = sorted[i].pnl;
+    const absVal = Math.abs(pnl);
+    const barH = Math.max(2, (absVal / maxAbs) * maxBarH);
+    const x = padX + i * (barW + gap);
+    const isWin = pnl >= 0;
+    const color = isWin ? '#10b981' : '#ef4444';
+    const opacity = 0.7 + (absVal / maxAbs) * 0.3;
+    const y = isWin ? (H - padY - barH) : padY;
+
+    rects += `<rect x="${x.toFixed(1)}" y="${y}" width="${barW.toFixed(1)}" height="${barH}" ` +
+      `fill="${color}" opacity="${opacity.toFixed(2)}" rx="1" ` +
+      `data-pnl="${pnl}" data-outcome="${esc(sorted[i].outcome)}" ` +
+      `data-price="$${(sorted[i].entryPrice||0).toFixed(4)}" data-idx="${i}"/>`;
+  }
+
+  // Zero line
+  const zeroLineX = padX + (maxAbs / (maxAbs * 2)) * (W - padX * 2);
+  rects += `<line x1="${zeroLineX.toFixed(1)}" y1="${padY}" x2="${zeroLineX.toFixed(1)}" y2="${H - padY}" ` +
+    `stroke="#2a3a5c" stroke-width="1" stroke-dasharray="3,3"/>`;
+
+  svg.setAttribute('viewBox', `0 0 ${W} ${H}`);
+  svg.innerHTML = rects;
+
+  // Summary label
+  const totalPnl = pnls.reduce((s, v) => s + v, 0);
+  const wins = pnls.filter(v => v > 0).length;
+  const losses = pnls.filter(v => v < 0).length;
+  label.textContent = `${barCount} trades · ${fmt$(totalPnl)} total`;
+  label.className = totalPnl >= 0 ? 'c-green' : 'c-red';
+
+  // Hover tooltip on bars
+  svg.onmousemove = function(ev) {
+    const rect = svg.getBoundingClientRect();
+    const mouseX = ev.clientX - rect.left;
+    const bars = svg.querySelectorAll('rect[data-pnl]');
+    let hit = null;
+    for (const bar of bars) {
+      const bx = parseFloat(bar.getAttribute('x'));
+      const bw = parseFloat(bar.getAttribute('width'));
+      if (mouseX >= bx && mouseX <= bx + bw) { hit = bar; break; }
+    }
+    if (!hit) { tooltip.classList.remove('visible'); return; }
+
+    const pnl = parseFloat(hit.dataset.pnl);
+    const outcome = hit.dataset.outcome;
+    const price = hit.dataset.price;
+    const color = pnl >= 0 ? 'var(--green)' : 'var(--red)';
+    ttTime.textContent = outcome;
+    ttBody.innerHTML = `<span class="tt-val" style="color:${color}">${fmt$(pnl)}</span> <span class="tt-label">@ ${price}</span>`;
+
+    let left = ev.clientX + 14;
+    let top = ev.clientY - 50;
+    if (left + 140 > window.innerWidth - 16) left = ev.clientX - 154;
+    if (top < 8) top = 8;
+    tooltip.style.left = left + 'px';
+    tooltip.style.top = top + 'px';
+    tooltip.classList.add('visible');
+  };
+  svg.onmouseleave = function() { tooltip.classList.remove('visible'); };
+  }); // requestAnimationFrame
 }
 
 function renderPositions(openJournal) {
