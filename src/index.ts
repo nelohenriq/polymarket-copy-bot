@@ -134,6 +134,24 @@ async function main(): Promise<void> {
   printIntelligenceConfig(intelligenceConfig);
   printStrategiesConfig(strategyConfigs);
 
+  // ── Startup health check: log data file status ──
+  const strategiesFile = process.env['STRATEGIES_FILE'] || '';
+  const stateFile = config.stateFilePath || getStatePath();
+  const feedbackFile = 'ai-calibration.json';
+  const dataFiles = [
+    { name: 'Dashboard', path: 'dry-run-trades.json' },
+    { name: 'State', path: stateFile },
+    { name: 'Strategies', path: strategiesFile },
+    { name: 'AI Calibration', path: feedbackFile },
+  ].filter(f => f.path);
+  const existing = dataFiles.filter(f => fs.existsSync(f.path));
+  const missing = dataFiles.filter(f => !fs.existsSync(f.path));
+  if (missing.length > 0) {
+    log.info(`📁 Data files: ${existing.length} found, ${missing.length} missing → ${missing.map(f => f.name).join(', ')}`);
+  } else {
+    log.info(`📁 Data files: all ${dataFiles.length} present`);
+  }
+
   // Validate mode combinations
   if (paperMode && backtestMode) {
     log.warn('Both PAPER_TRADING and BACKTEST are enabled — backtest mode takes priority');
