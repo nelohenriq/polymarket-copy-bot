@@ -28,6 +28,7 @@ import {
   isPaperTrading, isBacktest, loadPaperConfig, loadBacktestConfig,
   printPaperConfig, printBacktestConfig,
   isIntelligenceEnabled, loadIntelligenceConfig, printIntelligenceConfig,
+  loadStrategies, printStrategiesConfig,
 } from './config';
 import { configureProxy, proxyFetch, runProxyDiagnostics } from './proxy';
 import { configureFinFeed } from './cross-platform';
@@ -51,6 +52,7 @@ import { log, setLogLevel } from './logger';
 import { ParsedTrade, SessionStats, BotConfig, PaperTradingConfig, AIFilterResult } from './types';
 import { loadState, saveState, getStatePath } from './state';
 import { calculateCopySize, calculateSimulatedFillPrice, calculateKellySize } from './sizing';
+import { StrategyRunner, StrategyRouter } from './strategy';
 import * as fs from 'fs';
 import * as dns from 'dns';
 import * as http from 'http';
@@ -121,6 +123,7 @@ async function main(): Promise<void> {
   const paperConfig = loadPaperConfig();
   const backtestConfig = loadBacktestConfig();
   const intelligenceConfig = loadIntelligenceConfig();
+  const strategyConfigs = loadStrategies();
 
   setLogLevel(config.logLevel);
   printConfig(config);
@@ -129,6 +132,7 @@ async function main(): Promise<void> {
   printPaperConfig(paperConfig);
   printBacktestConfig(backtestConfig);
   printIntelligenceConfig(intelligenceConfig);
+  printStrategiesConfig(strategyConfigs);
 
   // Validate mode combinations
   if (paperMode && backtestMode) {
@@ -229,6 +233,28 @@ async function main(): Promise<void> {
   if (aiFilter && config.aiFeedbackEnabled) {
     aiFilter.enableFeedback();
     log.info('AI self-improvement feedback enabled — tracking prediction calibration');
+  }
+
+  // ── Multi-strategy initialization ──
+  let strategyRunners: StrategyRunner[] = [];
+  let strategyRouter: StrategyRouter | null = null;
+  const multiStrategy = !!strategyConfigs && strategyConfigs.length > 0;
+  if (multiStrategy && strategyConfigs) {
+    for (const sc of strategyConfigs) {
+      if (sc.enabled) {
+        strategyRunners.push(new StrategyRunner(sc, config));
+      }
+    }
+    if (strategyRunners.length > 0) {
+      strategyRouter = new StrategyRouter(strategyRunners);
+      log.success(`Multi-strategy mode: ${strategyRunners.length} active strategies`);
+      for (const runner of strategyRunners) {
+        const ec = runner.getEffectiveConfig();
+        log.info(`  [${runner.name}] maxNotional=$${ec.maxSessionNotional} maxTrade=$${ec.maxTradeSize} multiplier=${ec.positionMultiplier}x`);
+      }
+    } else {
+      log.warn('STRATEGIES_FILE loaded but no enabled strategies found — using single-strategy mode');
+    }
   }
 
   // Trade journal — tracks all trades for paper trading, backtesting, AND dry-run mode
@@ -397,10 +423,138 @@ async function main(): Promise<void> {
     log.success(`🎯 Profit target already reached ($${riskManager.getState().sessionPnl.toFixed(2)}) — monitoring ${journal.getOpenPositions().length} open position(s) for exits`);
   }
 
+  // ── Helper: Execute a trade for a specific strategy runner ──
+  async function executeForStrategy(runner: StrategyRunner, trade: ParsedTrade, notional: number): Promise<void> {
+    runner.trackRouted();
+
+    // Strategy-level risk check
+    const riskCheck = runner.checkTrade(trade, notional);
+    if (!riskCheck.allowed) {
+      log.risk(`[${runner.name}] Trade blocked: ${riskCheck.reason}`);
+      telegram?.notifyRisk({ type: 'blocked', message: `[${runner.name}] ${riskCheck.reason ?? 'Unknown'}`, trade: trade.outcome });
+      runner.trackBlocked();
+      stats.tradesSkipped++;
+      return;
+    }
+
+    // Global safety-net risk check (catches cross-strategy overexposure)
+    const globalCheck = riskManager.checkTrade(trade, notional);
+    if (!globalCheck.allowed) {
+      log.risk(`[${runner.name}] Global risk block: ${globalCheck.reason}`);
+      telegram?.notifyRisk({ type: 'blocked', message: `Global limit: ${globalCheck.reason ?? 'Unknown'}`, trade: trade.outcome });
+      runner.trackBlocked();
+      stats.tradesSkipped++;
+      return;
+    }
+
+    // Strategy-level AI filter
+    const aiResult = await runner.evaluateAI(trade);
+    if (aiResult && !aiResult.approved) {
+      stats.tradesAiRejected++;
+      log.info(`[${runner.name}] 🤖 AI rejected: prob=${(aiResult.ensembleProbability * 100).toFixed(1)}%`);
+      runner.trackBlocked();
+      return;
+    }
+
+    if (aiResult) {
+      trade.aiProbability = aiResult.ensembleProbability;
+      trade.aiConfidence = aiResult.confidence;
+    }
+
+    // Execute via shared executor
+    executor
+      .executeCopyTrade(trade)
+      .then((result) => {
+        if (result.success) {
+          stats.tradesCopied++;
+          stats.totalVolume += result.copyNotional;
+
+          // Record in strategy's independent trackers
+          runner.recordFill({
+            trade, notional: result.copyNotional, shares: result.copyShares,
+            price: result.price, side: result.side,
+          });
+          runner.trackExecuted(result.copyNotional);
+
+          // Also update global trackers for the safety-net risk manager
+          positions.recordFill({ trade, notional: result.copyNotional, shares: result.copyShares, price: result.price, side: result.side });
+          riskManager.recordFill({ trade, notional: result.copyNotional, shares: result.copyShares, price: result.price, side: result.side });
+
+          if (journal) {
+            journal.recordEntry(trade, result.copyNotional, result.price, `[${runner.name}]`);
+            persistJournal();
+          }
+
+          telegram?.notifyExecution({ side: result.side, shares: result.copyShares, price: result.price, notional: result.copyNotional, orderId: result.orderId ?? '', outcome: trade.outcome });
+          log.success(`[${runner.name}] Copy trade executed: ${result.side} ${result.copyShares.toFixed(4)} shares @ $${result.price.toFixed(4)}`);
+        } else {
+          stats.tradesFailed++;
+          log.error(`[${runner.name}] Copy trade failed: ${result.error}`);
+        }
+      })
+      .catch((error) => {
+        stats.tradesFailed++;
+        log.error(`[${runner.name}] Copy trade error: ${error instanceof Error ? error.message : String(error)}`);
+      });
+  }
+
   // ── Step 5: Handle incoming trades ──
   async function handleNewTrade(trade: ParsedTrade): Promise<void> {
     stats.tradesDetected++;
 
+    // ── Multi-strategy routing ──
+    if (strategyRouter) {
+      if (trade.side === 'BUY') {
+        const runner = strategyRouter.routeBuy(trade);
+        if (runner) {
+          const notional = executor.calculateCopySize(trade.size);
+          log.trade(`[${runner.name}] BUY signal from ${trade.user.slice(0, 8)}... | ${trade.outcome.slice(0, 30)} | $${trade.size.toFixed(2)} @ ${trade.price.toFixed(4)}`);
+          await executeForStrategy(runner, trade, notional);
+        } else {
+          log.debug(`No strategy matched BUY trade for ${trade.outcome.slice(0, 30)} — skipping`);
+          stats.tradesSkipped++;
+        }
+      } else if (trade.side === 'SELL') {
+        // Track per-wallet timestamp for catch-up replay on restart
+        if (trade.user) {
+          lastProcessedTimestamps.set(trade.user, Math.max(lastProcessedTimestamps.get(trade.user) || 0, trade.timestamp));
+        }
+
+        // Route SELL to the strategy that owns the position
+        const runner = strategyRouter.routeSell(trade.tokenId);
+        if (runner) {
+          log.info(`[${runner.name}] SELL signal: ${trade.outcome.slice(0, 30)} @ $${trade.price}`);
+          // Record exit in journal
+          if (journal) {
+            const exitEntry = journal.findOpenPosition(trade.tokenId);
+            journal.recordExit(trade.tokenId, trade.price, trade.timestamp);
+            if (exitEntry) {
+              const exitPnl = exitEntry.pnl ?? 0;
+              const freedNotional = exitEntry.entryPrice * exitEntry.size;
+
+              // Update strategy's own trackers
+              runner.recordExit(trade, exitEntry.entryPrice, exitEntry.size, trade.price, exitPnl);
+
+              // Also update global trackers for safety-net risk manager + live price/trailing stop
+              positions.recordFill({ trade, notional: trade.price * exitEntry.size, shares: exitEntry.size, price: trade.price, side: 'SELL' });
+              riskManager.reduceSessionNotional(freedNotional);
+              riskManager.addSessionPnl(exitPnl);
+
+              const emoji = exitPnl >= 0 ? '✅' : '❌';
+              log.info(`${emoji} [${runner.name} EXIT] ${exitEntry.outcome} | P&L: $${exitPnl.toFixed(2)}`);
+              telegram?.notifyTrade({ side: 'SELL', size: exitEntry.size, price: trade.price, outcome: exitEntry.outcome, user: exitEntry.trader || 'unknown' });
+            }
+            persistJournal();
+          }
+        } else {
+          log.debug(`No strategy owns position ${trade.tokenId.slice(0, 12)}… — SELL ignored`);
+        }
+        stats.tradesSkipped++;
+      }
+      return;
+    }
+
+    // ── Single-strategy mode (original logic) ──
     const isProfitHit = riskManager.isProfitTargetReached();
     const isCapped = riskManager.isNotionalCapped();
 
@@ -1492,6 +1646,7 @@ async function main(): Promise<void> {
             livePriceEnabled: config.livePriceEnabled,
           },
           calibration: aiFilter && config.aiFeedbackEnabled ? aiFilter.getCalibrationStats() : null,
+          strategies: strategyRouter ? strategyRunners.map(r => r.getState()) : null,
           reconciliation: { ...reconciliation },
         };
         res.end(JSON.stringify(liveData));

@@ -1,0 +1,50 @@
+[
+  {
+    "name": "aggressive-crypto",
+    "enabled": true,
+    "routing": {
+      "categories": ["crypto"]
+    },
+    "maxSessionNotional": 5000,
+    "maxPerMarketNotional": 500,
+    "maxTradeSize": 200,
+    "positionMultiplier": 0.25,
+    "kellySizingEnabled": true,
+    "kellyFraction": 0.75,
+    "trailingStopEnabled": true,
+    "trailingStopPct": 0.15,
+    "dailyLossLimit": 0.10,
+    "maxDrawdown": 0.30
+  },
+  {
+    "name": "conservative-default",
+    "enabled": true,
+    "routing": {
+      "isDefault": true
+    },
+    "maxSessionNotional": 1000,
+    "maxPerMarketNotional": 200,
+    "maxTradeSize": 50,
+    "positionMultiplier": 0.05,
+    "kellySizingEnabled": false,
+    "trailingStopEnabled": true,
+    "trailingStopPct": 0.10,
+    "dailyLossLimit": 0.03,
+    "maxDrawdown": 0.15
+  },
+  {
+    "name": "whale-copy",
+    "enabled": false,
+    "routing": {
+      "traders": ["0xAbC1234567890aBcDeF1234567890AbCdEf12345"]
+    },
+    "maxSessionNotional": 10000,
+    "maxTradeSize": 500,
+    "positionMultiplier": 0.5,
+    "maxSessionProfit": 2000,
+    "aiFilterEnabled": true,
+    "aiFilterModel": "claude-sonnet-4-20250514",
+    "aiFilterMinConfidence": 0.7,
+    "aiFilterMinEdge": 0.10
+  }
+]

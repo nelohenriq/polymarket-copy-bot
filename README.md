@@ -172,6 +172,38 @@ The AI filter evaluates each trade signal before copying:
 5. Approves only if confidence ≥ threshold AND edge ≥ threshold
 6. Caches results to avoid redundant API calls
 
+### Multi-Strategy Architecture
+
+Run multiple strategies in parallel with independent risk budgets. Each strategy gets its own PositionTracker and RiskManager, and trades are routed by category, trader wallet, or market slug.
+
+```bash
+STRATEGIES_FILE=strategies.json
+```
+
+Example `strategies.json`:
+```json
+[
+  {
+    "name": "aggressive",
+    "enabled": true,
+    "routing": { "categories": ["crypto"] },
+    "maxSessionNotional": 5000,
+    "maxTradeSize": 200,
+    "positionMultiplier": 0.25
+  },
+  {
+    "name": "conservative",
+    "enabled": true,
+    "routing": { "isDefault": true },
+    "maxSessionNotional": 1000,
+    "maxTradeSize": 50,
+    "positionMultiplier": 0.05
+  }
+]
+```
+
+Trades are routed by matching rules. If no rule matches, the strategy with `isDefault: true` handles the trade. A global safety-net RiskManager catches cross-strategy overexposure.
+
 ## Environment Variables
 
 | Variable | Required | Default | Description |

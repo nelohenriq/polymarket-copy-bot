@@ -4,7 +4,8 @@
  */
 
 import * as dotenv from 'dotenv';
-import { BotConfig, CopyOrderType, LogLevel, AIFilterConfig, LeaderboardConfig, PaperTradingConfig, BacktestConfig, IntelligenceConfig, EventCategory } from './types';
+import * as fs from 'fs';
+import { BotConfig, CopyOrderType, LogLevel, AIFilterConfig, LeaderboardConfig, PaperTradingConfig, BacktestConfig, IntelligenceConfig, EventCategory, StrategyConfig } from './types';
 
 dotenv.config();
 
@@ -429,4 +430,65 @@ export function printIntelligenceConfig(config: IntelligenceConfig | undefined):
   console.log(`     Categories:     ${config.categories.length > 0 ? config.categories.join(', ') : 'all'}`);
   console.log(`     Watch Keywords: ${config.watchKeywords.length > 0 ? config.watchKeywords.join(', ') : 'none'}`);
   console.log(`     LLM Analysis:   ${config.useLLM ? 'enabled' : 'disabled'}`);
+}
+
+/**
+ * Load multi-strategy configuration from a JSON file.
+ * Returns undefined if STRATEGIES_FILE is not set.
+ * Each strategy can override risk/sizing/AI settings and define routing rules.
+ */
+export function loadStrategies(): StrategyConfig[] | undefined {
+  const filePath = process.env['STRATEGIES_FILE'];
+  if (!filePath) return undefined;
+
+  try {
+    const raw = fs.readFileSync(filePath, 'utf-8');
+    const parsed = JSON.parse(raw) as StrategyConfig[];
+
+    if (!Array.isArray(parsed) || parsed.length === 0) {
+      throw new Error('STRATEGIES_FILE must contain a non-empty JSON array of strategy configs');
+    }
+
+    // Validate each strategy
+    for (const s of parsed) {
+      if (!s.name || typeof s.name !== 'string') {
+        throw new Error(`Strategy missing required 'name' field`);
+      }
+      if (!s.routing || typeof s.routing !== 'object') {
+        throw new Error(`Strategy '${s.name}' missing required 'routing' field`);
+      }
+      // Default enabled to true if omitted
+      if (s.enabled === undefined) s.enabled = true;
+    }
+
+    // Ensure at most one default strategy
+    const defaults = parsed.filter(s => s.routing.isDefault);
+    if (defaults.length > 1) {
+      throw new Error(`Only one strategy can have routing.isDefault=true (found ${defaults.length})`);
+    }
+
+    return parsed;
+  } catch (err) {
+    if (err instanceof SyntaxError) {
+      throw new Error(`STRATEGIES_FILE '${filePath}' contains invalid JSON`);
+    }
+    throw err;
+  }
+}
+
+export function printStrategiesConfig(strategies: StrategyConfig[] | undefined): void {
+  if (!strategies) {
+    console.log('   Multi-Strategy:   disabled (single-strategy mode)');
+    return;
+  }
+  console.log(`   Multi-Strategy:   ✅ ENABLED (${strategies.length} strategies)`);
+  for (const s of strategies) {
+    const enabled = s.enabled ? '✅' : '⏸️';
+    const routing = [];
+    if (s.routing.categories?.length) routing.push(`categories=[${s.routing.categories.join(',')}]`);
+    if (s.routing.traders?.length) routing.push(`traders=${s.routing.traders.length}`);
+    if (s.routing.marketSlugs?.length) routing.push(`slugs=${s.routing.marketSlugs.length}`);
+    if (s.routing.isDefault) routing.push('DEFAULT');
+    console.log(`     ${enabled} ${s.name} → ${routing.join(', ') || 'no rules'}`);
+  }
 }

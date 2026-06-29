@@ -562,6 +562,69 @@ export interface CorrelationRecord {
 // ──────────────────────────────────────────────
 
 /** Record of AI prediction vs actual outcome for calibration */
+// ──────────────────────────────────────────────
+// Multi-Strategy Architecture
+// ──────────────────────────────────────────────
+
+/** Rules for routing trades to a strategy */
+export interface StrategyRoutingRules {
+  /** Match trades by market category (e.g. 'crypto', 'politics') */
+  categories?: string[];
+  /** Match trades by trader wallet address */
+  traders?: string[];
+  /** Match trades by market slug pattern (substring match) */
+  marketSlugs?: string[];
+  /** If true, this strategy is the catch-all for unmatched trades */
+  isDefault?: boolean;
+}
+
+/** Per-strategy configuration — overrides global BotConfig for risk/sizing/AI */
+export interface StrategyConfig {
+  /** Unique strategy name (e.g. 'aggressive', 'conservative', 'crypto-only') */
+  name: string;
+  /** Whether this strategy is active */
+  enabled: boolean;
+  /** Routing rules — determines which trades this strategy handles */
+  routing: StrategyRoutingRules;
+
+  // Risk overrides (optional — falls back to global BotConfig)
+  maxSessionNotional?: number;
+  maxPerMarketNotional?: number;
+  maxPerCategoryNotional?: number;
+  maxTradeSize?: number;
+  minTradeSize?: number;
+  dailyLossLimit?: number;
+  maxDrawdown?: number;
+  totalLossLimit?: number;
+  maxSessionProfit?: number;
+
+  // Sizing overrides
+  positionMultiplier?: number;
+  kellySizingEnabled?: boolean;
+  kellyFraction?: number;
+  trailingStopEnabled?: boolean;
+  trailingStopPct?: number;
+
+  // AI filter overrides (optional — uses separate AITradeFilter instance)
+  aiFilterEnabled?: boolean;
+  aiFilterModel?: string;
+  aiFilterMinConfidence?: number;
+  aiFilterMinEdge?: number;
+}
+
+/** Runtime state for a running strategy */
+export interface StrategyState {
+  name: string;
+  tradesRouted: number;
+  tradesExecuted: number;
+  tradesBlocked: number;
+  totalVolume: number;
+  openPositions: number;
+  sessionNotional: number;
+  sessionPnl: number;
+  halted: boolean;
+}
+
 export interface AICalibrationRecord {
   /** AI's ensemble probability estimate (0-1) */
   probability: number;
