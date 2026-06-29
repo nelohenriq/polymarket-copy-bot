@@ -334,6 +334,41 @@
     font-size: 10px; padding: 3px 10px; border-radius: 6px; font-weight: 600;
     background: var(--bg); border: 1px solid var(--border);
   }
+  /* ── Time-of-Day Heatmap ── */
+  .tod-heatmap-wrap {
+    overflow-x: auto; -webkit-overflow-scrolling: touch;
+  }
+  .tod-heatmap {
+    display: grid; gap: 2px;
+    grid-template-columns: 40px repeat(24, minmax(22px, 1fr));
+    font-size: 9px; font-variant-numeric: tabular-nums;
+  }
+  .tod-header {
+    text-align: center; color: var(--muted); font-weight: 600;
+    padding: 2px 0; font-size: 8px; letter-spacing: 0.3px;
+  }
+  .tod-day-label {
+    display: flex; align-items: center; color: var(--muted);
+    font-weight: 600; font-size: 10px; padding-right: 4px;
+  }
+  .tod-cell {
+    aspect-ratio: 1; min-height: 20px; border-radius: 3px;
+    display: flex; align-items: center; justify-content: center;
+    font-weight: 700; font-size: 8px; cursor: default;
+    transition: transform 0.12s ease, box-shadow 0.12s ease;
+    position: relative;
+  }
+  .tod-cell:hover {
+    transform: scale(1.15); z-index: 2;
+    box-shadow: 0 2px 8px rgba(0,0,0,0.4);
+  }
+  .tod-legend {
+    display: flex; align-items: center; gap: 4px;
+    justify-content: center; margin-top: 6px; font-size: 9px; color: var(--muted);
+  }
+  .tod-legend-swatch {
+    width: 14px; height: 10px; border-radius: 2px;
+  }
 
   /* ── Reconciliation Panel ── */
   .recon-item { display: flex; justify-content: space-between; align-items: center; padding: 6px 0; font-size: 12px; }
@@ -568,6 +603,10 @@
       <div class="modal-section" id="modalStratHoldSection" style="display:none">
         <div class="modal-section-title">Hold Time Distribution</div>
         <div id="modalStratHoldChart"></div>
+      </div>
+      <div class="modal-section" id="modalStratTodSection" style="display:none">
+        <div class="modal-section-title">P&L by Hour & Day</div>
+        <div class="tod-heatmap-wrap" id="modalStratTodChart"></div>
       </div>
       <div class="modal-section" id="modalStratCatSection" style="display:none">
         <div class="modal-section-title">Category Performance</div>
@@ -1020,6 +1059,9 @@ function openStrategyModal(name) {
   // Hold Time Distribution
   renderStratHoldTime(closedEntries);
 
+  // Time-of-Day Heatmap
+  renderStratTimeHeatmap(closedEntries);
+
   // P&L Distribution Histogram
   renderStratHistogram(closedEntries);
 
@@ -1032,6 +1074,128 @@ function closeStrategyModal(e) {
   document.getElementById('strategyModal').classList.remove('visible');
   document.body.style.overflow = '';
   activeStrategyName = null;
+}
+
+function renderStratTimeHeatmap(closedEntries) {
+  const section = document.getElementById('modalStratTodSection');
+  const container = document.getElementById('modalStratTodChart');
+  if (!section || !container) return;
+
+  // Filter closed entries with a timestamp
+  const withTime = closedEntries.filter(e => e.timestamp && e.pnl != null);
+  if (withTime.length === 0) {
+    section.style.display = 'none';
+    return;
+  }
+  section.style.display = '';
+
+  // Days of week and hours
+  const dayNames = ['Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat', 'Sun'];
+  // 7 days × 24 hours grid
+  const grid = []; // grid[day][hour] = { pnl, count, wins, losses }
+  for (let d = 0; d < 7; d++) {
+    grid[d] = [];
+    for (let h = 0; h < 24; h++) {
+      grid[d][h] = { pnl: 0, count: 0, wins: 0, losses: 0 };
+    }
+  }
+
+  for (const e of withTime) {
+    const dt = new Date(e.timestamp);
+    const day = (dt.getDay() + 6) % 7; // Mon=0, Sun=6
+    const hour = dt.getHours();
+    grid[day][hour].pnl += e.pnl;
+    grid[day][hour].count++;
+    if (e.pnl > 0) grid[day][hour].wins++;
+    else if (e.pnl < 0) grid[day][hour].losses++;
+  }
+
+  // Find max absolute P&L for color scaling
+  let maxAbsPnl = 0;
+  for (let d = 0; d < 7; d++) {
+    for (let h = 0; h < 24; h++) {
+      maxAbsPnl = Math.max(maxAbsPnl, Math.abs(grid[d][h].pnl));
+    }
+  }
+  if (maxAbsPnl === 0) maxAbsPnl = 1;
+
+  // Build heatmap HTML
+  let h = '<div class="tod-heatmap">';
+  // Header row
+  h += '<div class="tod-header"></div>';
+  for (let hr = 0; hr < 24; hr++) {
+    const label = hr === 0 ? '12a' : hr < 12 ? hr + 'a' : hr === 12 ? '12p' : (hr - 12) + 'p';
+    h += `<div class="tod-header">${label}</div>`;
+  }
+
+  // Data rows
+  for (let d = 0; d < 7; d++) {
+    h += `<div class="tod-day-label">${dayNames[d]}</div>`;
+    for (let hr = 0; hr < 24; hr++) {
+      const cell = grid[d][hr];
+      let bg = 'var(--bg)';
+      let textColor = 'var(--muted2)';
+      let cellText = '';
+
+      if (cell.count > 0) {
+        const intensity = Math.min(Math.abs(cell.pnl) / maxAbsPnl, 1);
+        const alpha = 0.15 + intensity * 0.75;
+        if (cell.pnl > 0) {
+          bg = `rgba(16,185,129,${alpha.toFixed(2)})`;
+          textColor = intensity > 0.5 ? '#fff' : 'var(--green)';
+        } else if (cell.pnl < 0) {
+          bg = `rgba(239,68,68,${alpha.toFixed(2)})`;
+          textColor = intensity > 0.5 ? '#fff' : 'var(--red)';
+        } else {
+          bg = 'rgba(90,107,138,0.15)';
+          textColor = 'var(--muted)';
+        }
+        const closed = cell.wins + cell.losses;
+        const wr = closed > 0 ? ((cell.wins / closed) * 100).toFixed(0) : null;
+        cellText = cell.count;
+
+        const tooltipText = `${dayNames[d]} ${hr}:00 · ${cell.count} trades · ${fmt$(cell.pnl)} P&L${wr !== null ? ' · ' + wr + '% WR' : ''}`;
+        h += `<div class="tod-cell" style="background:${bg};color:${textColor}" data-tip="${tooltipText.replace(/"/g, '&quot;')}" onmouseenter="showTodTip(this,event)" onmousemove="moveTodTip(event)" onmouseleave="hideTodTip()">${cellText}</div>`;
+      } else {
+        h += `<div class="tod-cell" style="background:${bg}"></div>`;
+      }
+    }
+  }
+  h += '</div>';
+
+  // Legend
+  h += `<div class="tod-legend">
+    <span class="tod-legend-swatch" style="background:rgba(239,68,68,0.9)"></span> Losing
+    <span style="margin:0 6px">·</span>
+    <span class="tod-legend-swatch" style="background:rgba(90,107,138,0.15)"></span> No trades
+    <span style="margin:0 6px">·</span>
+    <span class="tod-legend-swatch" style="background:rgba(16,185,129,0.9)"></span> Winning
+  </div>`;
+
+  container.innerHTML = h;
+}
+
+// ── Heatmap tooltip helpers (reuse sparkTooltip) ──
+function showTodTip(el, ev) {
+  const tip = document.getElementById('sparkTooltip');
+  const ttTime = document.getElementById('ttTime');
+  const ttBody = document.getElementById('ttBody');
+  const text = el.dataset.tip || '';
+  const parts = text.split(' · ');
+  ttTime.textContent = parts[0] || '';
+  ttBody.innerHTML = parts.slice(1).map(p => `<span class="tt-val">${esc(p)}</span>`).join(' <span class="tt-label">·</span> ');
+  moveTodTip(ev);
+  tip.classList.add('visible');
+}
+function moveTodTip(ev) {
+  const tip = document.getElementById('sparkTooltip');
+  let left = ev.clientX + 14;
+  if (left + 180 > window.innerWidth - 16) left = ev.clientX - 194;
+  tip.style.left = left + 'px';
+  tip.style.top = (ev.clientY - 40) + 'px';
+}
+function hideTodTip() {
+  document.getElementById('sparkTooltip').classList.remove('visible');
 }
 
 function renderStratHoldTime(closedEntries) {
