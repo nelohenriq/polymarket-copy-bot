@@ -1422,8 +1422,6 @@ function renderStratTrendline(closedEntries) {
     section.style.display = 'none';
     return;
   }
-  section.style.display = '';
-
   // Group trades into daily buckets over the last 7 days
   const now = new Date();
   const MS_PER_DAY = 86_400_000;
@@ -1462,7 +1460,9 @@ function renderStratTrendline(closedEntries) {
     cumulative.push(cumulative[cumulative.length - 1] + day.pnl);
   }
 
-  // Render SVG
+  // Show section first so clientWidth is non-zero, then render SVG in next frame
+  section.style.display = '';
+  requestAnimationFrame(() => {
   const W = svg.clientWidth || 600, H = 100, pad = 8;
   const vals = cumulative;
   const min = Math.min(...vals), max = Math.max(...vals);
@@ -1536,7 +1536,7 @@ function renderStratTrendline(closedEntries) {
       const dist = Math.abs(points[i].x - svgX);
       if (dist < minDist) { minDist = dist; nearest = i; }
     }
-    if (nearest === null || minDist > 30) { tooltip.classList.remove('visible'); return; }
+    if (nearest === null || nearest === 0 || minDist > 30) { tooltip.classList.remove('visible'); return; }
 
     const day = days[nearest - 1];
     const cumPnl = cumulative[nearest];
@@ -1562,6 +1562,7 @@ function renderStratTrendline(closedEntries) {
     tooltip.classList.remove('visible');
     svg.querySelectorAll('.crosshair, .hover-dot').forEach(el => el.style.display = 'none');
   };
+  }); // requestAnimationFrame
 }
 
 function renderStratTimeHeatmap(closedEntries) {
