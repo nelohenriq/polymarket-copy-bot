@@ -16,6 +16,9 @@ export class RiskManager {
   /** Timestamp of last daily reset */
   private lastDailyReset: number;
 
+  /** Realized P&L from closed trades (fed from journal) */
+  private _realizedPnl = 0;
+
   constructor(config: BotConfig, positions: PositionTracker) {
     this.config = config;
     this.positions = positions;
@@ -89,7 +92,20 @@ export class RiskManager {
       }
     }
 
-    // Gate 4b: Session profit cap (stop copying when target profit reached)
+    // Gate 4b: Per-category notional cap
+    if (this.config.maxPerCategoryNotional > 0 && trade.category) {
+      const categoryNotionals = this.positions.getCategoryNotionals();
+      const currentCategory = categoryNotionals.get(trade.category) || 0;
+      const nextCategory = currentCategory + copyNotional;
+      if (nextCategory > this.config.maxPerCategoryNotional) {
+        return {
+          allowed: false,
+          reason: `Per-category notional cap exceeded for '${trade.category}' ($${nextCategory.toFixed(2)} > $${this.config.maxPerCategoryNotional})`,
+        };
+      }
+    }
+
+    // Gate 4c: Session profit cap (stop copying when target profit reached)
     if (this.config.maxSessionProfit > 0 && this.state.sessionPnl >= this.config.maxSessionProfit) {
       return {
         allowed: false,
@@ -219,6 +235,29 @@ export class RiskManager {
   getState(): RiskState {
     this.checkDailyReset();
     return { ...this.state };
+  }
+
+  /**
+   * Set realized P&L from the trade journal (for portfolio valuation).
+   */
+  setRealizedPnl(pnl: number): void {
+    this._realizedPnl = pnl;
+  }
+
+  /**
+   * Get realized P&L.
+   */
+  getRealizedPnl(): number {
+    return this._realizedPnl;
+  }
+
+  /**
+   * Get combined portfolio value: realized + unrealized P&L.
+   */
+  getPortfolioValue(startingCapital: number): { realized: number; unrealized: number; total: number } {
+    const realized = this._realizedPnl;
+    const unrealized = this.positions.getUnrealizedPnl();
+    return { realized, unrealized, total: startingCapital + realized + unrealized };
   }
 
   /**

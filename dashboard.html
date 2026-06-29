@@ -384,6 +384,9 @@
   <div class="pill" style="--pill-color:var(--cyan)"><div class="pill-label">Peak Capital</div><div class="pill-value c-cyan" id="sPeak">—</div></div>
   <div class="pill" style="--pill-color:var(--blue)"><div class="pill-label">Volume</div><div class="pill-value c-blue" id="sVol">—</div><div class="pill-sub" id="sVolSub"></div></div>
   <div class="pill" style="--pill-color:var(--green)"><div class="pill-label">Copied</div><div class="pill-value c-green" id="sCopied">—</div></div>
+  <div class="pill" style="--pill-color:var(--cyan)"><div class="pill-label">Portfolio Value</div><div class="pill-value c-cyan" id="sPortfolio">—</div><div class="pill-sub" id="sPortfolioSub"></div></div>
+  <div class="pill" style="--pill-color:var(--green)"><div class="pill-label">Realized P&L</div><div class="pill-value" id="sRealized">—</div></div>
+  <div class="pill" style="--pill-color:var(--yellow)"><div class="pill-label">Unrealized P&L</div><div class="pill-value" id="sUnrealized">—</div></div>
   <div class="pill" style="--pill-color:var(--muted)"><div class="pill-label">Detected</div><div class="pill-value c-muted" id="sDetected">—</div></div>
   <div class="pill" style="--pill-color:var(--orange)"><div class="pill-label">AI Rejected</div><div class="pill-value c-orange" id="sAiRejected">—</div></div>
   <div class="pill" style="--pill-color:var(--yellow)"><div class="pill-label">Skipped</div><div class="pill-value c-yellow" id="sSkipped">—</div></div>
@@ -575,6 +578,20 @@ async function fetchData() {
     document.getElementById('sCopyRateSub').textContent = `${s.tradesCopied || 0} of ${s.tradesDetected || 0}`;
 
     // Risk
+    // Portfolio value (realized + unrealized)
+    const pf = d.portfolio || {};
+    const realized = pf.realized || 0;
+    const unrealized = pf.unrealized || 0;
+    const portfolioTotal = pf.total || 0;
+    const pfEl = document.getElementById('sPortfolio');
+    if (pfEl) { pfEl.textContent = fmt$(portfolioTotal); pfEl.className = 'pill-value ' + (portfolioTotal >= (pf.startingCapital || 0) ? 'c-green' : 'c-red'); }
+    const pfSub = document.getElementById('sPortfolioSub');
+    if (pfSub) pfSub.textContent = pf.startingCapital ? `from $${pf.startingCapital.toFixed(0)} capital` : '';
+    const realEl = document.getElementById('sRealized');
+    if (realEl) { realEl.textContent = fmt$(realized); realEl.className = 'pill-value ' + (realized >= 0 ? 'c-green' : 'c-red'); }
+    const unrlEl = document.getElementById('sUnrealized');
+    if (unrlEl) { unrlEl.textContent = fmt$(unrealized); unrlEl.className = 'pill-value ' + (unrealized >= 0 ? 'c-yellow' : 'c-red'); }
+
     allRisk = d.risk || {};
     renderRisk();
 
@@ -734,15 +751,24 @@ function renderPositions(openJournal) {
     const items = pos.length > 0 ? pos : openJournal.map(e => ({
       outcome: e.outcome, market: e.market, title: e.title || e.market,
       tokenId: e.tokenId, shares: e.shares || e.size || 0,
-      notional: (e.entryPrice||0)*(e.shares||e.size||0), avgPrice: e.entryPrice || 0
+      notional: (e.entryPrice||0)*(e.shares||e.size||0), avgPrice: e.entryPrice || 0,
+      currentPrice: e.currentPrice, peakPrice: e.peakPrice, unrealizedPnl: e.unrealizedPnl, trailingStopPrice: e.trailingStopPrice,
     }));
     for (const p of items) {
       const title = (p.title || p.outcome || '').slice(0, 35);
+      const upnl = p.unrealizedPnl;
+      const upnlColor = upnl !== undefined ? (upnl >= 0 ? 'var(--green)' : 'var(--red)') : 'var(--muted)';
+      const upnlText = upnl !== undefined ? fmt$(upnl) : '—';
+      const livePrice = p.currentPrice ? `$${p.currentPrice.toFixed(4)}` : null;
+      const peak = p.peakPrice ? `$${p.peakPrice.toFixed(4)}` : null;
+      const stopPrice = p.trailingStopPrice ? `$${p.trailingStopPrice.toFixed(4)}` : null;
+      const stopWarning = p.currentPrice && p.trailingStopPrice && p.currentPrice <= p.trailingStopPrice * 1.05;
       h += `<div style="padding:8px 0;border-bottom:1px solid var(--border);display:flex;justify-content:space-between;align-items:center">
         <div><div style="font-size:13px;font-weight:500">${esc(title)}</div>
-        <div style="font-size:10px;color:var(--muted);margin-top:1px">${esc((p.outcome||'').slice(0,20))}</div></div>
+        <div style="font-size:10px;color:var(--muted);margin-top:1px">${esc((p.outcome||'').slice(0,20))}${livePrice ? ` · <span style="color:var(--cyan)">now ${livePrice}</span>` : ''}${stopWarning ? ' <span style="color:var(--red)">⚠ stop near</span>' : ''}</div></div>
         <div style="text-align:right"><div style="color:var(--cyan);font-weight:600;font-size:13px">${fmt$(p.notional)}</div>
-        <div style="color:var(--muted);font-size:10px">${(p.shares||0).toFixed(2)} sh · avg $${(p.avgPrice||0).toFixed(4)}</div></div>
+        <div style="color:${upnlColor};font-size:10px;font-weight:600">${upnlText} P&L</div>
+        <div style="color:var(--muted);font-size:9px">${(p.shares||0).toFixed(2)} sh · avg $${(p.avgPrice||0).toFixed(4)}${peak ? ` · peak ${peak}` : ''}${stopPrice ? ` · stop ${stopPrice}` : ''}</div></div>
       </div>`;
     }
   }
@@ -1023,7 +1049,8 @@ function renderRecon(rc, cfg) {
   // Status alerts
   if (mode === 'exit-only') {
     h += '<div class="recon-alert warn">⏸️ Exit-only mode — BUY trades paused until positions close</div>';
-  } else  // Editable deviation setting
+  }
+  // Editable deviation setting
   const devPct = ((cfg?.maxMissedSellDeviation ?? 0.15) * 100).toFixed(0);
   const currentOType = cfg?.autoCloseOrderType || 'FOK';
   h += `<div class="recon-item"><span class="rl">Close Order Type</span><span class="rv"><select id="closeOrderSelect" style="background:var(--bg3);border:1px solid var(--border);color:var(--text);padding:3px 8px;border-radius:6px;font-size:11px;font-weight:600;font-family:inherit;cursor:pointer;accent-color:var(--accent)" onchange="updateCloseOrderType(this.value)">${['FOK','GTC','FAK'].map(o => `<option value="${o}"${o===currentOType?' selected':''}>${o}</option>`).join('')}</select></span></div>`;

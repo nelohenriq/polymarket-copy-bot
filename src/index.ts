@@ -48,9 +48,9 @@ import { MarketResolver } from './resolver';
 import { TelegramNotifier } from './telegram';
 import { MarketIntelligence, formatIntelligenceForPrompt } from './intelligence';
 import { log, setLogLevel } from './logger';
-import { ParsedTrade, SessionStats, BotConfig, PaperTradingConfig } from './types';
+import { ParsedTrade, SessionStats, BotConfig, PaperTradingConfig, AIFilterResult } from './types';
 import { loadState, saveState, getStatePath } from './state';
-import { calculateCopySize, calculateSimulatedFillPrice } from './sizing';
+import { calculateCopySize, calculateSimulatedFillPrice, calculateKellySize } from './sizing';
 import * as fs from 'fs';
 import * as dns from 'dns';
 import * as http from 'http';
@@ -162,8 +162,9 @@ async function main(): Promise<void> {
   }
 
   // ── Step 1b: Auto-discover wallets if enabled ──
+  let scraper: LeaderboardScraper | null = null;
   if (leaderboardConfig && !backtestMode) {
-    const scraper = new LeaderboardScraper(leaderboardConfig);
+    scraper = new LeaderboardScraper(leaderboardConfig);
     const profiles = await scraper.discover();
     if (profiles.length > 0) {
       const discoveredWallets = profiles.map((p) => p.walletAddress);
@@ -479,8 +480,8 @@ async function main(): Promise<void> {
     // Notify: trade detected
     telegram?.notifyTrade({ side: trade.side, size: trade.size, price: trade.price, outcome: trade.outcome, user: trade.user });
 
-    // Calculate copy size
-    const copyNotional = executor.calculateCopySize(trade.size);
+    // Calculate copy size (mutable — Kelly sizing may adjust it)
+    let copyNotional = executor.calculateCopySize(trade.size);
 
     // Risk check
     const riskCheck = riskManager.checkTrade(trade, copyNotional);
@@ -498,9 +499,11 @@ async function main(): Promise<void> {
     );
 
     // AI filter — estimate true probability before copying
+    let aiResultForSizing: AIFilterResult | null = null;
     if (aiFilter) {
       try {
         const aiResult = await aiFilter.evaluate(trade);
+        aiResultForSizing = aiResult;
         if (!aiResult.approved) {
           stats.tradesAiRejected++;
           telegram?.notifyAI({ approved: false, probability: aiResult.ensembleProbability, marketPrice: aiResult.marketPrice, edge: aiResult.edge, confidence: aiResult.confidence, outcome: trade.outcome, latencyMs: aiResult.latencyMs });
@@ -517,6 +520,23 @@ async function main(): Promise<void> {
           `market=${(aiResult.marketPrice * 100).toFixed(1)}% ` +
           `edge=${(aiResult.edge * 100).toFixed(1)}% (${aiResult.latencyMs}ms)`,
         );
+
+        // Kelly criterion sizing — scale position by AI confidence
+        if (config.kellySizingEnabled && aiResult.approved) {
+          const kellyNotional = calculateKellySize(aiResult, copyNotional, config.kellyFraction);
+          if (kellyNotional !== copyNotional) {
+            log.info(`📊 Kelly sizing: $${copyNotional.toFixed(2)} → $${kellyNotional.toFixed(2)} (conf=${(aiResult.confidence * 100).toFixed(0)}%, edge=${(aiResult.edge * 100).toFixed(1)}%)`);
+            copyNotional = kellyNotional;
+            // Re-check risk gates with adjusted size
+            const recheck = riskManager.checkTrade(trade, copyNotional);
+            if (!recheck.allowed) {
+              log.risk(`Trade blocked after Kelly adjustment: ${recheck.reason}`);
+              telegram?.notifyRisk({ type: 'blocked', message: recheck.reason ?? 'Unknown', trade: trade.outcome });
+              stats.tradesSkipped++;
+              return;
+            }
+          }
+        }
       } catch (error) {
         const msg = error instanceof Error ? error.message : String(error);
         log.error(`AI filter error: ${msg}`);
@@ -1183,6 +1203,158 @@ async function main(): Promise<void> {
       (config.autoRedeemEnabled ? ' (auto-redeem ON)' : ' (detection only)'));
   }
 
+  // ── Step 5i: Dynamic leaderboard refresh (periodic) ──
+  let leaderboardRefreshInterval: ReturnType<typeof setInterval> | null = null;
+  if (scraper && leaderboardConfig && !backtestMode) {
+    leaderboardRefreshInterval = setInterval(async () => {
+      if (!scraper!.needsRefresh()) return;
+      try {
+        log.info('🔄 Refreshing leaderboard — checking for new top traders...');
+        const profiles = await scraper!.discover();
+        if (profiles.length > 0) {
+          const discoveredWallets = profiles.map((p) => p.walletAddress);
+          const allWallets = [...new Set([...config.targetWallets, ...discoveredWallets])];
+          const newCount = allWallets.length - config.targetWallets.length;
+          if (newCount > 0) {
+            config = { ...config, targetWallets: allWallets };
+            log.success(`Leaderboard refreshed: ${newCount} new trader(s) added (${allWallets.length} total)`);
+            telegram?.notifyRisk({ type: 'blocked', message: `🔄 Leaderboard refreshed: ${newCount} new trader(s) added`, trade: '' });
+          } else {
+            log.info('Leaderboard refresh: no new traders found');
+          }
+        }
+      } catch (err) {
+        log.debug(`Leaderboard refresh failed: ${err instanceof Error ? err.message : String(err)}`);
+      }
+    }, (leaderboardConfig.refreshIntervalMinutes || 60) * 60_000);
+    log.info(`Dynamic leaderboard refresh: every ${leaderboardConfig.refreshIntervalMinutes || 60} min`);
+  }
+
+  // ── Step 5j: Live price tracking + trailing stop-loss (periodic) ──
+  let livePriceInterval: ReturnType<typeof setInterval> | null = null;
+  let trailingStopInterval: ReturnType<typeof setInterval> | null = null;
+  if (config.livePriceEnabled && journal && !backtestMode) {
+    const priceIntervalMs = config.livePriceIntervalMs ?? 60_000;
+    livePriceInterval = setInterval(async () => {
+      const openPositions = positions.getAllPositions().filter(p => p.shares > 0);
+      if (openPositions.length === 0) return;
+
+      // Fetch current prices from Gamma API for all open positions
+      for (const pos of openPositions) {
+        try {
+          const resp = await proxyFetch(
+            `https://gamma-api.polymarket.com/markets?token_id=${pos.tokenId}&limit=1`,
+            { headers: { Accept: 'application/json' }, signal: AbortSignal.timeout(8_000) }
+          );
+          if (!resp.ok) continue;
+          const markets = (await resp.json()) as Array<{ outcomePrices?: string }>;
+          if (!Array.isArray(markets) || markets.length === 0) continue;
+
+          const rawPrices = markets[0].outcomePrices;
+          const prices: string[] = typeof rawPrices === 'string'
+            ? JSON.parse(rawPrices) as string[]
+            : Array.isArray(rawPrices) ? rawPrices : [];
+
+          // Match our token to the correct price by finding its index in the tokens array
+          // Gamma API returns tokens: [{token_id, outcome}], prices: [YES_price, NO_price]
+          const tokens = (markets[0] as Record<string, unknown>).tokens as Array<{ token_id?: string; token?: string }> | undefined;
+          if (tokens && Array.isArray(tokens)) {
+            const tokenIdx = tokens.findIndex(t => (t.token_id || t.token) === pos.tokenId);
+            if (tokenIdx >= 0 && tokenIdx < prices.length) {
+              const price = parseFloat(prices[tokenIdx]);
+              if (!isNaN(price) && price > 0 && price < 1) {
+                positions.updateCurrentPrice(pos.tokenId, price);
+              }
+            }
+          }
+        } catch {
+          // Silently continue — price updates are best-effort
+        }
+      }
+
+      // Update realized P&L from journal for portfolio valuation
+      if (journal) {
+        const closedTrades = journal.getClosedTrades();
+        const realizedPnl = closedTrades.reduce((sum, t) => sum + (t.pnl || 0), 0);
+        riskManager.setRealizedPnl(realizedPnl);
+      }
+    }, priceIntervalMs);
+    log.info(`Live price tracking: every ${priceIntervalMs / 1000}s`);
+  }
+
+  // Trailing stop-loss check (runs after live prices are updated)
+  if (config.trailingStopEnabled && journal && !backtestMode) {
+    const stopCheckMs = Math.max(config.livePriceIntervalMs ?? 60_000, 30_000);
+    trailingStopInterval = setInterval(async () => {
+      const triggers = positions.getTrailingStopTriggers(config.trailingStopPct);
+      if (triggers.length === 0) return;
+
+      for (const pos of triggers) {
+        const stopPrice = (pos.peakPrice || 0) * (1 - config.trailingStopPct);
+        const drawdownPct = pos.peakPrice ? ((pos.peakPrice - (pos.currentPrice || 0)) / pos.peakPrice * 100).toFixed(1) : '?';
+        log.warn(`🛑 TRAILING STOP: ${pos.outcome.slice(0, 30)} | Current: $${(pos.currentPrice || 0).toFixed(4)} | Peak: $${(pos.peakPrice || 0).toFixed(4)} | Drawdown: ${drawdownPct}%`);
+
+        // Attempt to sell via CLOB
+        if (clob && !config.dryRun) {
+          try {
+            const closeResult = await executor.executeCloseOrder(pos.tokenId, pos.shares, pos.currentPrice || stopPrice, 'FOK');
+            if (closeResult.success) {
+              log.success(`✅ [TRAILING STOP] Sold ${pos.outcome.slice(0, 30)} | ${closeResult.copyShares.toFixed(4)} shares @ $${closeResult.price.toFixed(4)}`);
+              telegram?.notifyExecution({ side: 'SELL', shares: closeResult.copyShares, price: closeResult.price, notional: closeResult.copyNotional, orderId: closeResult.orderId ?? '', outcome: pos.outcome });
+
+              // Record exit in journal
+              if (journal) {
+                const exitEntry = journal.findOpenPosition(pos.tokenId);
+                journal.recordExit(pos.tokenId, closeResult.price, Date.now());
+                if (exitEntry) {
+                  const exitPnl = (closeResult.price - exitEntry.entryPrice) * exitEntry.size;
+                  riskManager.reduceSessionNotional(exitEntry.entryPrice * exitEntry.size);
+                  riskManager.addSessionPnl(exitPnl);
+                }
+              }
+              persistJournal();
+            } else {
+              log.error(`❌ [TRAILING STOP] Failed to sell ${pos.outcome.slice(0, 30)}: ${closeResult.error}`);
+              telegram?.notifyError('Trailing Stop Failed', `${pos.outcome.slice(0, 40)}: ${closeResult.error}`);
+            }
+          } catch (err) {
+            log.error(`❌ [TRAILING STOP] Error: ${err instanceof Error ? err.message : String(err)}`);
+          }
+        } else {
+          // Dry run — just log
+          log.info(`[DRY RUN] Trailing stop triggered: ${pos.outcome.slice(0, 30)} would sell @ $${(pos.currentPrice || 0).toFixed(4)}`);
+          if (journal) {
+            journal.recordExit(pos.tokenId, pos.currentPrice || stopPrice, Date.now());
+          }
+          persistJournal();
+        }
+
+        // Update position tracker to reflect the sell (reduces shares to 0)
+        // Without this, getTrailingStopTriggers() would keep finding the position
+        // because PositionTracker and TradeJournal are separate systems.
+        positions.recordFill({
+          trade: {
+            id: `trailing-stop-${pos.tokenId}`,
+            timestamp: Date.now(),
+            market: pos.market,
+            tokenId: pos.tokenId,
+            side: 'SELL' as const,
+            size: pos.shares,
+            price: pos.currentPrice || pos.avgPrice,
+            user: 'trailing-stop',
+            outcome: pos.outcome,
+            title: pos.outcome,
+          },
+          notional: (pos.currentPrice || pos.avgPrice) * pos.shares,
+          shares: pos.shares,
+          price: pos.currentPrice || pos.avgPrice,
+          side: 'SELL',
+        });
+      }
+    }, stopCheckMs);
+    log.info(`Trailing stop-loss: enabled (${(config.trailingStopPct * 100).toFixed(0)}% drawdown from peak)`);
+  }
+
   // ── Step 6: Start trade monitor ──
   const monitor = new TradeMonitor(config, handleNewTrade);
   await monitor.start();
@@ -1272,16 +1444,31 @@ async function main(): Promise<void> {
             shares: p.shares,
             notional: p.notional,
             avgPrice: p.avgPrice,
+            currentPrice: p.currentPrice,
+            peakPrice: p.peakPrice,
+            unrealizedPnl: p.currentPrice !== undefined ? (p.currentPrice - p.avgPrice) * p.shares : undefined,
+            trailingStopPrice: p.peakPrice ? p.peakPrice * (1 - (config.trailingStopPct || 0.10)) : undefined,
           })),
           risk: { ...riskManager.getState() },
+          portfolio: {
+            realized: riskManager.getRealizedPnl(),
+            unrealized: positions.getUnrealizedPnl(),
+            total: startingCapital + riskManager.getRealizedPnl() + positions.getUnrealizedPnl(),
+            startingCapital,
+          },
           traders,
           config: {
             maxSessionNotional: config.maxSessionNotional,
             maxPerMarketNotional: config.maxPerMarketNotional,
+            maxPerCategoryNotional: config.maxPerCategoryNotional,
             positionMultiplier: config.positionMultiplier,
             targetWallets: config.targetWallets.length,
             maxMissedSellDeviation: runtimeMaxMissedSellDeviation,
             autoCloseOrderType: runtimeAutoCloseOrderType,
+            trailingStopEnabled: config.trailingStopEnabled,
+            trailingStopPct: config.trailingStopPct,
+            kellySizingEnabled: config.kellySizingEnabled,
+            livePriceEnabled: config.livePriceEnabled,
           },
           reconciliation: { ...reconciliation },
         };
@@ -1414,6 +1601,9 @@ async function main(): Promise<void> {
     clearInterval(staleCheckInterval);
     clearInterval(gtcCheckInterval);
     if (resolutionCheckInterval) clearInterval(resolutionCheckInterval);
+    if (leaderboardRefreshInterval) clearInterval(leaderboardRefreshInterval);
+    if (livePriceInterval) clearInterval(livePriceInterval);
+    if (trailingStopInterval) clearInterval(trailingStopInterval);
     clearInterval(persistInterval);
     if (marketRefreshInterval) clearInterval(marketRefreshInterval);
 

@@ -95,6 +95,83 @@ export class PositionTracker {
   }
 
   /**
+   * Get notional exposure grouped by category.
+   * Used for per-category exposure limits.
+   */
+  getCategoryNotionals(): Map<string, number> {
+    const map = new Map<string, number>();
+    for (const pos of this.positions.values()) {
+      if (pos.shares > 0 && pos.category) {
+        map.set(pos.category, (map.get(pos.category) || 0) + pos.notional);
+      }
+    }
+    return map;
+  }
+
+  /**
+   * Update the peak price for trailing stop-loss tracking.
+   * Returns true if the peak price was updated (new high).
+   */
+  updatePeakPrice(tokenId: string, currentPrice: number): boolean {
+    const pos = this.positions.get(tokenId);
+    if (!pos || pos.shares <= 0) return false;
+    if (!pos.peakPrice || currentPrice > pos.peakPrice) {
+      pos.peakPrice = currentPrice;
+      pos.lastUpdated = Date.now();
+      return true;
+    }
+    return false;
+  }
+
+  /**
+   * Update the current market price for a position (for unrealized P&L).
+   */
+  updateCurrentPrice(tokenId: string, currentPrice: number): void {
+    const pos = this.positions.get(tokenId);
+    if (pos && pos.shares > 0) {
+      pos.currentPrice = currentPrice;
+      pos.lastPriceUpdate = Date.now();
+      // Also update peak price for trailing stop
+      if (!pos.peakPrice || currentPrice > pos.peakPrice) {
+        pos.peakPrice = currentPrice;
+      }
+    }
+  }
+
+  /**
+   * Get positions that have triggered their trailing stop-loss.
+   * A position triggers when currentPrice <= peakPrice * (1 - stopPct).
+   */
+  getTrailingStopTriggers(stopPct: number): Position[] {
+    const triggers: Position[] = [];
+    for (const pos of this.positions.values()) {
+      if (pos.shares > 0 && pos.peakPrice && pos.currentPrice) {
+        const stopPrice = pos.peakPrice * (1 - stopPct);
+        if (pos.currentPrice <= stopPrice) {
+          triggers.push(pos);
+        }
+      }
+    }
+    return triggers;
+  }
+
+  /**
+   * Calculate total unrealized P&L across all open positions.
+   */
+  getUnrealizedPnl(): number {
+    let total = 0;
+    for (const pos of this.positions.values()) {
+      if (pos.shares > 0 && pos.currentPrice !== undefined) {
+        total += (pos.currentPrice - pos.avgPrice) * pos.shares;
+      }
+    }
+    return total;
+  }
+
+  /**
+   * Get total realized P&L from closed positions (passed in from journal).
+   */
+  /**
    * Load positions from persisted state (for restart recovery).
    */
   loadPositions(positions: Position[]): void {

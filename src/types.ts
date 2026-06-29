@@ -73,6 +73,22 @@ export interface BotConfig {
   autoRedeemEnabled?: boolean;
   /** Interval in ms for checking market resolution status (default: 600000 = 10 min) */
   resolutionCheckIntervalMs?: number;
+  /** Maximum notional exposure per market category (0 = unlimited) */
+  maxPerCategoryNotional: number;
+  /** Enable trailing stop-loss on open positions */
+  trailingStopEnabled: boolean;
+  /** Trailing stop percentage from peak price (0.10 = 10% drawdown triggers sell) */
+  trailingStopPct: number;
+  /** Enable Kelly criterion for position sizing based on AI confidence */
+  kellySizingEnabled: boolean;
+  /** Fraction of Kelly criterion to use (0.5 = half Kelly, more conservative) */
+  kellyFraction: number;
+  /** Enable live price tracking for unrealized P&L calculation */
+  livePriceEnabled: boolean;
+  /** Interval in ms for live price refresh (default: 60000 = 1 min) */
+  livePriceIntervalMs: number;
+  /** Enable AI filter self-improvement via outcome feedback */
+  aiFeedbackEnabled: boolean;
 }
 
 export type CopyOrderType = 'FOK' | 'GTC' | 'FAK';
@@ -176,6 +192,14 @@ export interface Position {
   notional: number;
   avgPrice: number;
   lastUpdated: number;
+  /** Market category (e.g. 'politics', 'crypto') for per-category exposure limits */
+  category?: string;
+  /** Highest price seen since entry (for trailing stop-loss) */
+  peakPrice?: number;
+  /** Current market price (fetched from Gamma API for unrealized P&L) */
+  currentPrice?: number;
+  /** Timestamp of last live price update */
+  lastPriceUpdate?: number;
 }
 
 // ──────────────────────────────────────────────

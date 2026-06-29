@@ -7,7 +7,9 @@ Automated copy-trading bot for [Polymarket](https://polymarket.com) — monitors
 - **🔍 Auto-Discovery** — Automatically finds top traders via the Polymarket leaderboard API (no manual wallet configuration needed)
 - **🤖 AI Trade Filter** — Uses GPT-4, Claude, or any OpenAI-compatible LLM to estimate true probability before copying trades
 - **📊 Ensemble Consensus** — Optionally run two LLMs and combine estimates via confidence-weighted averaging
-- **🛡️ Risk Management** — 4-layer protection: session caps, per-market limits, daily loss, drawdown halt
+- **🛡️ Risk Management** — 5-layer protection: session caps, per-market limits, per-category caps, daily loss, drawdown halt
+- **📉 Trailing Stop-Loss** — Auto-sell positions when price drops from peak by configurable percentage
+- **📊 Kelly Criterion Sizing** — Scale position size by AI confidence and probability edge
 - **📝 Paper Trading** — Simulated execution with virtual money for backtesting and live dry-run
 - **📈 Performance Metrics** — Sharpe ratio, max drawdown, win rate, Calmar ratio, portfolio snapshots
 - **📓 Trade Journal** — Full trade recording with CSV/JSON export
@@ -210,6 +212,15 @@ The AI filter evaluates each trade signal before copying:
 | `RESOLUTION_CHECK_ENABLED` | — | `false` | Detect market resolutions for open positions |
 | `AUTO_REDEEM_ENABLED` | — | `false` | Auto-redeem winning ERC1155 tokens via CTF (requires wallet to hold tokens directly) |
 | `RESOLUTION_CHECK_INTERVAL_MS` | — | `600000` | Resolution check interval in ms (10 min) |
+| `MAX_PER_CATEGORY_NOTIONAL` | — | `0` | Max exposure per market category (0 = disabled) |
+| `TRAILING_STOP_ENABLED` | — | `false` | Auto-sell on price drawdown from peak |
+| `TRAILING_STOP_PCT` | — | `0.10` | Drawdown % from peak to trigger sell (10%) |
+| `KELLY_SIZING_ENABLED` | — | `false` | Scale position size by AI confidence |
+| `KELLY_FRACTION` | — | `0.5` | Fraction of Kelly criterion to use |
+| `LIVE_PRICE_ENABLED` | — | `false` | Fetch live prices for unrealized P&L |
+| `LIVE_PRICE_INTERVAL_MS` | — | `60000` | Live price refresh interval (1 min) |
+| `AI_FEEDBACK_ENABLED` | — | `false` | Feed resolution outcomes back to AI filter |
+| `LEADERBOARD_REFRESH_MINUTES` | — | `60` | How often to re-discover top traders |
 
 See `.env.example` for the full list with documentation.
 

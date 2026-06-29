@@ -135,6 +135,14 @@ export function loadConfig(allowMissingKey = false): BotConfig {
     resolutionCheckEnabled: parseBoolEnv('RESOLUTION_CHECK_ENABLED', false),
     autoRedeemEnabled: parseBoolEnv('AUTO_REDEEM_ENABLED', false),
     resolutionCheckIntervalMs: parseFloatEnv('RESOLUTION_CHECK_INTERVAL_MS', 600_000),
+    maxPerCategoryNotional: parseFloatEnv('MAX_PER_CATEGORY_NOTIONAL', 0),
+    trailingStopEnabled: parseBoolEnv('TRAILING_STOP_ENABLED', false),
+    trailingStopPct: parseFloatEnv('TRAILING_STOP_PCT', 0.10),
+    kellySizingEnabled: parseBoolEnv('KELLY_SIZING_ENABLED', false),
+    kellyFraction: parseFloatEnv('KELLY_FRACTION', 0.5),
+    livePriceEnabled: parseBoolEnv('LIVE_PRICE_ENABLED', false),
+    livePriceIntervalMs: parseFloatEnv('LIVE_PRICE_INTERVAL_MS', 60_000),
+    aiFeedbackEnabled: parseBoolEnv('AI_FEEDBACK_ENABLED', false),
   };
 
   return config;
@@ -366,6 +374,11 @@ export function printConfig(config: BotConfig): void {
     console.log(`   Auto-redeem:          ${config.autoRedeemEnabled ? '✅ ENABLED' : 'disabled'}`);
     console.log(`   Resolution interval:  ${(config.resolutionCheckIntervalMs ?? 600_000) / 1000}s`);
   }
+  console.log(`   Per-category cap:     ${config.maxPerCategoryNotional > 0 ? `$${config.maxPerCategoryNotional}` : 'disabled'}`);
+  console.log(`   Trailing stop:        ${config.trailingStopEnabled ? `✅ ENABLED (${(config.trailingStopPct * 100).toFixed(0)}%)` : 'disabled'}`);
+  console.log(`   Kelly sizing:         ${config.kellySizingEnabled ? `✅ ENABLED (fraction: ${config.kellyFraction})` : 'disabled'}`);
+  console.log(`   Live prices:          ${config.livePriceEnabled ? `✅ ENABLED (every ${config.livePriceIntervalMs / 1000}s)` : 'disabled'}`);
+  console.log(`   AI feedback:          ${config.aiFeedbackEnabled ? '✅ ENABLED' : 'disabled'}`);
   console.log('');
 }
 
