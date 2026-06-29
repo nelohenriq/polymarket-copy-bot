@@ -855,12 +855,7 @@ function updateThemeIcon() {
 // Init theme icon on load
 try { updateThemeIcon(); } catch(e) {}
 
-function isLightTheme() {
-  return document.documentElement.getAttribute('data-theme') === 'light';
-}
-function themeColor(darkVal, lightVal) {
-  return isLightTheme() ? lightVal : darkVal;
-}
+
 
 function setTab(el) {
   document.querySelectorAll('.tab').forEach(t => t.classList.remove('active'));
