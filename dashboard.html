@@ -370,6 +370,70 @@
     width: 14px; height: 10px; border-radius: 2px;
   }
 
+  /* ── Strategy Compare Modal ── */
+  .compare-modal { width: 900px; max-width: 95vw; }
+  .compare-selectors {
+    display: flex; gap: 12px; align-items: center; margin-bottom: 20px; flex-wrap: wrap;
+  }
+  .compare-selectors select {
+    flex: 1; min-width: 120px; background: var(--bg3); border: 1px solid var(--border);
+    color: var(--text); padding: 8px 12px; border-radius: 8px;
+    font-size: 13px; font-weight: 600; font-family: inherit; cursor: pointer;
+  }
+  .compare-selectors .vs-label {
+    font-size: 14px; font-weight: 700; color: var(--muted2); letter-spacing: 1px;
+  }
+  .compare-grid {
+    display: grid; grid-template-columns: 1fr 120px 1fr; gap: 0;
+    border: 1px solid var(--border); border-radius: 10px; overflow: hidden;
+  }
+  .compare-header {
+    padding: 10px 14px; font-size: 13px; font-weight: 700; text-align: center;
+    background: var(--bg3); border-bottom: 1px solid var(--border);
+  }
+  .compare-header.left { color: var(--cyan); }
+  .compare-header.right { color: var(--accent); }
+  .compare-header.mid { color: var(--muted); font-size: 10px; text-transform: uppercase; letter-spacing: 1px; }
+  .compare-row {
+    display: contents;
+  }
+  .compare-row > div {
+    padding: 10px 14px; border-bottom: 1px solid var(--border);
+    display: flex; align-items: center;
+  }
+  .compare-row:last-child > div { border-bottom: none; }
+  .compare-cell { justify-content: center; text-align: center; }
+  .compare-cell .cv { font-size: 15px; font-weight: 700; font-variant-numeric: tabular-nums; }
+  .compare-cell .cs { font-size: 10px; color: var(--muted); margin-top: 1px; }
+  .compare-label {
+    justify-content: center; text-align: center;
+    font-size: 10px; color: var(--muted); text-transform: uppercase;
+    letter-spacing: 0.8px; font-weight: 600; background: var(--bg);
+  }
+  .compare-cell.winner { background: rgba(16,185,129,0.06); }
+  .compare-cell.loser { background: rgba(239,68,68,0.04); }
+  .compare-delta {
+    font-size: 11px; font-weight: 600; font-variant-numeric: tabular-nums;
+    display: inline-block; padding: 1px 6px; border-radius: 4px;
+  }
+  .compare-delta.pos { background: var(--green-bg); color: var(--green); }
+  .compare-delta.neg { background: var(--red-bg); color: var(--red); }
+  .compare-delta.zero { color: var(--muted); }
+  .compare-spark-section {
+    margin-top: 16px;
+  }
+  .compare-spark-section svg { display: block; width: 100%; cursor: crosshair; }
+  .compare-empty {
+    text-align: center; padding: 40px 20px; color: var(--muted); font-size: 13px;
+  }
+  .compare-btn {
+    background: var(--bg3); border: 1px solid var(--border); border-radius: 6px;
+    padding: 4px 10px; font-size: 10px; font-weight: 600; color: var(--accent);
+    cursor: pointer; font-family: inherit; transition: all 0.2s; letter-spacing: 0.5px;
+    text-transform: uppercase;
+  }
+  .compare-btn:hover { background: var(--accent); color: #fff; border-color: var(--accent); }
+
   /* ── Reconciliation Panel ── */
   .recon-item { display: flex; justify-content: space-between; align-items: center; padding: 6px 0; font-size: 12px; }
   .recon-item:not(:last-child) { border-bottom: 1px solid var(--border); }
@@ -571,7 +635,7 @@
     <div class="panel-body" id="reconPanel"><div style="color:var(--muted);font-size:12px;text-align:center;padding:12px 0">Loading…</div></div>
   </div>
   <div class="panel" id="strategiesPanelWrap" style="display:none">
-    <div class="panel-head"><span class="icon">⚡</span> Strategy Breakdown <span id="stratCount" style="color:var(--muted);font-weight:400;font-size:11px"></span></div>
+    <div class="panel-head"><span class="icon">⚡</span> Strategy Breakdown <span id="stratCount" style="color:var(--muted);font-weight:400;font-size:11px"></span> <button class="compare-btn" onclick="openCompareModal()" id="compareBtn" style="display:none;margin-left:auto">⚖️ Compare</button></div>
     <div class="panel-body no-pad" id="strategiesPanel"></div>
   </div>
   <div class="panel" id="calibrationPanelWrap" style="display:none">
@@ -628,6 +692,26 @@
           <tbody id="modalStratTradesBody"></tbody>
         </table>
       </div>
+    </div>
+  </div>
+</div>
+
+<!-- ═══ Strategy Compare Modal ═══ -->
+<div class="modal-overlay" id="compareModal" onclick="closeCompareModal(event)">
+  <div class="modal compare-modal" onclick="event.stopPropagation()">
+    <div class="modal-header">
+      <div>
+        <h2>⚖️ Compare Strategies</h2>
+      </div>
+      <div class="modal-close" onclick="closeCompareModal()">✕</div>
+    </div>
+    <div class="modal-body">
+      <div class="compare-selectors">
+        <select id="compareLeft" onchange="renderCompare()"></select>
+        <span class="vs-label">VS</span>
+        <select id="compareRight" onchange="renderCompare()"></select>
+      </div>
+      <div id="compareContent"></div>
     </div>
   </div>
 </div>
@@ -954,7 +1038,7 @@ function closeTraderModal(e) {
   document.getElementById('traderModal').classList.remove('visible');
   document.body.style.overflow = '';
 }
-document.addEventListener('keydown', e => { if (e.key === 'Escape') { closeTraderModal(); closeStrategyModal(); } });
+document.addEventListener('keydown', e => { if (e.key === 'Escape') { closeTraderModal(); closeStrategyModal(); closeCompareModal(); } });
 
 // ── Strategy Detail Modal ──
 let activeStrategyName = null;
@@ -1074,6 +1158,189 @@ function closeStrategyModal(e) {
   document.getElementById('strategyModal').classList.remove('visible');
   document.body.style.overflow = '';
   activeStrategyName = null;
+}
+
+// ── Strategy Compare Modal ──
+function openCompareModal() {
+  const strategies = _lastStrategies || [];
+  if (strategies.length < 2) return;
+  const leftSel = document.getElementById('compareLeft');
+  const rightSel = document.getElementById('compareRight');
+  const opts = strategies.map(s => `<option value="${esc(s.name)}">${esc(s.name)}</option>`).join('');
+  leftSel.innerHTML = opts;
+  rightSel.innerHTML = opts;
+  // Default: select first two different strategies
+  leftSel.selectedIndex = 0;
+  rightSel.selectedIndex = strategies.length > 1 ? 1 : 0;
+  document.getElementById('compareModal').classList.add('visible');
+  document.body.style.overflow = 'hidden';
+  renderCompare();
+}
+
+function closeCompareModal(e) {
+  if (e && e.target !== e.currentTarget) return;
+  document.getElementById('compareModal').classList.remove('visible');
+  document.body.style.overflow = '';
+}
+
+function renderCompare() {
+  const strategies = _lastStrategies || [];
+  const leftName = document.getElementById('compareLeft').value;
+  const rightName = document.getElementById('compareRight').value;
+  const left = strategies.find(s => s.name === leftName);
+  const right = strategies.find(s => s.name === rightName);
+  const container = document.getElementById('compareContent');
+
+  if (!left || !right) {
+    container.innerHTML = '<div class="compare-empty">Select two strategies to compare.</div>';
+    return;
+  }
+  if (leftName === rightName) {
+    container.innerHTML = '<div class="compare-empty">Select two different strategies to compare.</div>';
+    return;
+  }
+
+  // Compute per-strategy stats from journal entries
+  const entries = allEntries || [];
+  function getStratStats(name) {
+    const stratEntries = entries.filter(e => getStrategyNameFromEntry(e) === name);
+    const closed = stratEntries.filter(e => e.pnl != null);
+    let wins = 0, losses = 0, totalPnl = 0, bestPnl = null, worstPnl = null;
+    let totalHoldMs = 0, holdCount = 0;
+    for (const e of closed) {
+      totalPnl += e.pnl;
+      if (e.pnl > 0) wins++;
+      else if (e.pnl < 0) losses++;
+      if (bestPnl === null || e.pnl > bestPnl) bestPnl = e.pnl;
+      if (worstPnl === null || e.pnl < worstPnl) worstPnl = e.pnl;
+      if (e.holdTimeMs > 0) { totalHoldMs += e.holdTimeMs; holdCount++; }
+    }
+    return {
+      entries: stratEntries, closed, wins, losses, totalPnl,
+      bestPnl, worstPnl,
+      winRate: closed.length > 0 ? wins / closed.length : null,
+      avgHoldMs: holdCount > 0 ? totalHoldMs / holdCount : null,
+    };
+  }
+  const ls = getStratStats(leftName);
+  const rs = getStratStats(rightName);
+
+  // Metric rows: [label, leftValue, rightValue, format, higherIsBetter]
+  function pnlColor(v) { return v > 0 ? 'c-green' : v < 0 ? 'c-red' : 'c-muted'; }
+
+  const rows = [
+    ['P&L', left.sessionPnl || 0, right.sessionPnl || 0, fmt$, true],
+    ['Volume', left.totalVolume || 0, right.totalVolume || 0, fmtShort$, true],
+    ['Trades Routed', left.tradesRouted || 0, right.tradesRouted || 0, v => v, true],
+    ['Trades Executed', left.tradesExecuted || 0, right.tradesExecuted || 0, v => v, true],
+    ['Exec Rate', left.tradesRouted > 0 ? left.tradesExecuted / left.tradesRouted : 0, right.tradesRouted > 0 ? right.tradesExecuted / right.tradesRouted : 0, fmtPct, true],
+    ['Blocked', left.tradesBlocked || 0, right.tradesBlocked || 0, v => v, false],
+    ['Win Rate', ls.winRate, rs.winRate, v => v !== null ? (v * 100).toFixed(1) + '%' : '—', true],
+    ['Wins / Losses', ls.wins + '/' + ls.losses, rs.wins + '/' + rs.losses, v => v, true],
+    ['Open Positions', left.openPositions || 0, right.openPositions || 0, v => v, false],
+    ['Exposure', left.sessionNotional || 0, right.sessionNotional || 0, fmt$, false],
+    ['Best Trade', ls.bestPnl, rs.bestPnl, v => v !== null ? fmt$(v) : '—', true],
+    ['Worst Trade', ls.worstPnl, rs.worstPnl, v => v !== null ? fmt$(v) : '—', true],
+    ['Avg Hold Time', ls.avgHoldMs, rs.avgHoldMs, v => v !== null ? fmtTime(v) : '—', false],
+    ['Halted', left.halted ? 'Yes' : 'No', right.halted ? 'Yes' : 'No', v => v, false],
+  ];
+    return '';
+  }
+
+  function winClass(lv, rv, higherIsBetter) {
+    if (typeof lv !== 'number' || typeof rv !== 'number') return { l: '', r: '' };
+    if (lv === rv) return { l: '', r: '' };
+    const leftWins = higherIsBetter ? lv > rv : lv < rv;
+    return { l: leftWins ? 'winner' : 'loser', r: leftWins ? 'loser' : 'winner' };
+  }
+
+  let h = '<div class="compare-grid">';
+  h += `<div class="compare-header left">${esc(leftName)}</div>`;
+  h += '<div class="compare-header mid">Delta</div>';
+  h += `<div class="compare-header right">${esc(rightName)}</div>`;
+
+  for (const [label, lv, rv, fmt, higherIsBetter] of rows) {
+    const wc = winClass(lv, rv, higherIsBetter);
+    const lStr = typeof lv === 'number' ? fmt(lv) : fmt(lv);
+    const rStr = typeof rv === 'number' ? fmt(rv) : fmt(rv);
+    const lColor = typeof lv === 'number' ? pnlColor(label === 'Blocked' || label === 'Halted' ? -1 : lv) : '';
+    const rColor = typeof rv === 'number' ? pnlColor(label === 'Blocked' || label === 'Halted' ? -1 : rv) : '';
+    // Special color for P&L row
+    const lPnlColor = label === 'P&L' ? pnlColor(lv) : '';
+    const rPnlColor = label === 'P&L' ? pnlColor(rv) : '';
+
+    h += `<div class="compare-row">`;
+    h += `<div class="compare-cell ${wc.l}"><div><div class="cv ${lPnlColor || lColor}">${esc(lStr)}</div></div></div>`;
+    h += `<div class="compare-label">${esc(label)}</div>`;
+    h += `<div class="compare-cell ${wc.r}"><div><div class="cv ${rPnlColor || rColor}">${esc(rStr)}</div></div></div>`;
+    h += `</div>`;
+  }
+  h += '</div>';
+
+  // Sparkline comparison section
+  const lHist = stratPnlHistory[leftName] || [];
+  const rHist = stratPnlHistory[rightName] || [];
+  if (lHist.length >= 2 || rHist.length >= 2) {
+    h += '<div class="compare-spark-section">';
+    h += '<div class="modal-section-title">P&L History Comparison</div>';
+    h += '<svg id="compareSparkline" width="100%" height="80" style="display:block;cursor:crosshair"></svg>';
+    h += `<div style="display:flex;justify-content:space-between;font-size:10px;color:var(--muted);margin-top:4px">
+      <span><span style="color:var(--cyan)">●</span> ${esc(leftName)}</span>
+      <span><span style="color:var(--accent)">●</span> ${esc(rightName)}</span>
+    </div>`;
+    h += '</div>';
+  }
+
+  container.innerHTML = h;
+
+  // Render comparison sparkline after DOM update
+  if (lHist.length >= 2 || rHist.length >= 2) {
+    requestAnimationFrame(() => {
+      const svg = document.getElementById('compareSparkline');
+      if (!svg) return;
+      const W = svg.clientWidth || 600, H = 80, pad = 4;
+      // Find combined value range
+      const allVals = [...lHist.map(p => p.v), ...rHist.map(p => p.v)];
+      const min = Math.min(...allVals, 0), max = Math.max(...allVals, 0);
+      const range = max - min || 1;
+      const zeroY = pad + (1 - (0 - min) / range) * (H - pad * 2);
+
+      function histToPoints(hist) {
+        if (hist.length < 2) return '';
+        return hist.map((p, i) => {
+          const x = pad + (i / (hist.length - 1)) * (W - pad * 2);
+          const y = pad + (1 - (p.v - min) / range) * (H - pad * 2);
+          return `${x.toFixed(1)},${y.toFixed(1)}`;
+        }).join(' ');
+      }
+
+      let svgContent = `<line x1="${pad}" y1="${zeroY.toFixed(1)}" x2="${W-pad}" y2="${zeroY.toFixed(1)}" stroke="#1e2d4a" stroke-width="0.5" stroke-dasharray="2,3"/>`;
+
+      // Left strategy line (cyan)
+      const lPts = histToPoints(lHist);
+      if (lPts) {
+        const fillL = lPts + ` ${W - pad},${zeroY.toFixed(1)} ${pad},${zeroY.toFixed(1)}`;
+        svgContent += `<polygon points="${fillL}" fill="#06b6d4" opacity="0.06"/>`;
+        svgContent += `<polyline points="${lPts}" fill="none" stroke="#06b6d4" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"/>`;
+        const lx = pad + ((lHist.length - 1) / (lHist.length - 1)) * (W - pad * 2);
+        const ly = pad + (1 - (lHist[lHist.length - 1].v - min) / range) * (H - pad * 2);
+        svgContent += `<circle cx="${lx.toFixed(1)}" cy="${ly.toFixed(1)}" r="2.5" fill="#06b6d4"/>`;
+      }
+
+      // Right strategy line (accent/purple)
+      const rPts = histToPoints(rHist);
+      if (rPts) {
+        const fillR = rPts + ` ${W - pad},${zeroY.toFixed(1)} ${pad},${zeroY.toFixed(1)}`;
+        svgContent += `<polygon points="${fillR}" fill="#6366f1" opacity="0.06"/>`;
+        svgContent += `<polyline points="${rPts}" fill="none" stroke="#6366f1" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"/>`;
+        const rx = pad + ((rHist.length - 1) / (rHist.length - 1)) * (W - pad * 2);
+        const ry = pad + (1 - (rHist[rHist.length - 1].v - min) / range) * (H - pad * 2);
+        svgContent += `<circle cx="${rx.toFixed(1)}" cy="${ry.toFixed(1)}" r="2.5" fill="#6366f1"/>`;
+      }
+
+      svg.innerHTML = svgContent;
+    });
+  }
 }
 
 function renderStratTimeHeatmap(closedEntries) {
@@ -1812,6 +2079,9 @@ function renderStrategies(strategies, risk) {
   }
   if (wrap) wrap.style.display = '';
   document.getElementById('stratCount').textContent = `(${strategies.length})`;
+  // Show compare button when 2+ strategies
+  const compareBtn = document.getElementById("compareBtn");
+  if (compareBtn) compareBtn.style.display = strategies.length >= 2 ? "" : "none";
 
   // Compute per-strategy win/loss from journal entries
   const stratStats = {};
