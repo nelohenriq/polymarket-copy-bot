@@ -79,6 +79,12 @@ export interface ResolutionResult {
   redeemed: boolean;
   redemptionAttempted: boolean;
   redeemTxHash?: string;
+  /** AI filter's probability estimate at time of trade (for calibration feedback) */
+  aiProbability?: number;
+  /** AI filter's confidence at time of trade */
+  aiConfidence?: number;
+  /** Market category */
+  category?: string;
 }
 
 export type ResolutionCallback = (result: ResolutionResult) => void;
@@ -354,6 +360,9 @@ export class MarketResolver {
       redeemed,
       redemptionAttempted: won && this.config.autoRedeem && !!this.ctfContract,
       redeemTxHash,
+      aiProbability: openPos.aiProbability,
+      aiConfidence: openPos.aiConfidence,
+      category: openPos.category,
     };
   }
 

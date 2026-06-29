@@ -225,6 +225,12 @@ async function main(): Promise<void> {
 
   const aiFilter = aiConfig ? new AITradeFilter(aiConfig) : null;
 
+  // Enable AI self-improvement feedback loop
+  if (aiFilter && config.aiFeedbackEnabled) {
+    aiFilter.enableFeedback();
+    log.info('AI self-improvement feedback enabled — tracking prediction calibration');
+  }
+
   // Trade journal — tracks all trades for paper trading, backtesting, AND dry-run mode
   const journal = (paperMode || config.dryRun) ? new TradeJournal() : null;
   const startingCapital = paperMode ? paperConfig!.startingCapital : 0;
@@ -520,6 +526,10 @@ async function main(): Promise<void> {
           `market=${(aiResult.marketPrice * 100).toFixed(1)}% ` +
           `edge=${(aiResult.edge * 100).toFixed(1)}% (${aiResult.latencyMs}ms)`,
         );
+
+        // Attach AI estimates to trade for journal + calibration feedback
+        trade.aiProbability = aiResult.ensembleProbability;
+        trade.aiConfidence = aiResult.confidence;
 
         // Kelly criterion sizing — scale position by AI confidence
         if (config.kellySizingEnabled && aiResult.approved) {
@@ -1186,6 +1196,17 @@ async function main(): Promise<void> {
             });
           }
         }
+        // Feed resolution outcome back to AI filter for calibration
+        if (config.aiFeedbackEnabled && result.aiProbability !== undefined && aiFilter) {
+          aiFilter.addFeedbackRecord({
+            probability: result.aiProbability,
+            confidence: result.aiConfidence ?? 0,
+            actualOutcome: result.won ? 1 : 0,
+            category: result.category,
+            timestamp: Date.now(),
+          });
+        }
+
         persistJournal();
       },
     });
@@ -1470,6 +1491,7 @@ async function main(): Promise<void> {
             kellySizingEnabled: config.kellySizingEnabled,
             livePriceEnabled: config.livePriceEnabled,
           },
+          calibration: aiFilter && config.aiFeedbackEnabled ? aiFilter.getCalibrationStats() : null,
           reconciliation: { ...reconciliation },
         };
         res.end(JSON.stringify(liveData));

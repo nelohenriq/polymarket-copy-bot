@@ -12,8 +12,9 @@
  * 5. Cache results to avoid redundant API calls
  */
 
-import { AIFilterConfig, AIFilterResult, AIProbabilityEstimate, ParsedTrade } from './types';
+import { AIFilterConfig, AIFilterResult, AIProbabilityEstimate, ParsedTrade, AICalibrationRecord, CalibrationBucket } from './types';
 import { log } from './logger';
+import * as fs from 'fs';
 import { proxyFetch } from './proxy';
 import { fetchConsensus, formatConsensusForPrompt, type ConsensusResult } from './cross-platform';
 import { getMarketData, formatMarketDataForPrompt, isBullpenAvailable } from './bullpen';
@@ -346,6 +347,7 @@ function buildAnalysisPrompt(
   consensus?: ConsensusResult,
   bullpen?: import('./bullpen').BullpenMarketData | null,
   intelligenceEvents?: import('./types').MarketEvent[],
+  calibrationContext?: string | null,
 ): string {
   const parts = [
     '## Market Question',
@@ -395,6 +397,11 @@ function buildAnalysisPrompt(
     if (intelPrompt) parts.push(intelPrompt);
   }
 
+  // Include AI calibration feedback if available
+  if (calibrationContext) {
+    parts.push(calibrationContext, '');
+  }
+
   parts.push(
     '## Your Task',
     'Estimate the TRUE probability that this event will occur. Consider:',
@@ -403,6 +410,9 @@ function buildAnalysisPrompt(
     '3. Whether the market price seems overpriced or underpriced',
     '4. The reliability of the information available',
     '5. Whether the whale trader\'s position makes sense given available data',
+    '6. Your historical calibration track record (if provided above)',
+    '',
+    'If you have a known bias (e.g. overconfident in 70-80% range), adjust your estimate accordingly.',
     '',
     'Provide your probability estimate as a number between 0 and 1.',
   );
@@ -464,10 +474,187 @@ export class AITradeFilter {
 
   private intelligence: MarketIntelligence | null = null;
 
+  /** Calibration feedback log — records AI predictions vs actual outcomes */
+  private feedbackLog: AICalibrationRecord[] = [];
+  private feedbackFilePath = 'ai-calibration.json';
+  private feedbackEnabled = false;
+
   constructor(config: AIFilterConfig) {
     this.config = config;
     this.cache = new AnalysisCache(config.cacheMinutes);
     this.rateLimiter = new RateLimiter(config.maxCallsPerMinute);
+  }
+
+  /**
+   * Enable self-improvement feedback loop.
+   * Loads persisted calibration history from disk.
+   */
+  enableFeedback(filePath?: string): void {
+    this.feedbackEnabled = true;
+    if (filePath) this.feedbackFilePath = filePath;
+
+    // Load existing calibration data from disk
+    try {
+      if (fs.existsSync(this.feedbackFilePath)) {
+        const raw = fs.readFileSync(this.feedbackFilePath, 'utf-8');
+        const data = JSON.parse(raw) as AICalibrationRecord[];
+        if (Array.isArray(data)) {
+          this.feedbackLog = data;
+          log.info(`AI calibration loaded: ${this.feedbackLog.length} historical predictions`);
+        }
+      }
+    } catch (err) {
+      log.debug(`Could not load AI calibration: ${err instanceof Error ? err.message : String(err)}`);
+    }
+  }
+
+  /**
+   * Record a resolution outcome for calibration.
+   * Called by the main orchestrator when a market resolves.
+   */
+  addFeedbackRecord(record: AICalibrationRecord): void {
+    if (!this.feedbackEnabled) return;
+
+    this.feedbackLog.push(record);
+
+    // Trim to last 500 records to prevent unbounded growth
+    if (this.feedbackLog.length > 500) {
+      this.feedbackLog = this.feedbackLog.slice(-500);
+    }
+
+    log.info(
+      `📊 AI calibration: recorded prediction ${(record.probability * 100).toFixed(1)}% → ` +
+      `actual ${record.actualOutcome === 1 ? 'WIN' : 'LOSS'} ` +
+      `(total: ${this.feedbackLog.length} predictions)`
+    );
+
+    // Persist to disk
+    this.saveFeedback();
+  }
+
+  /**
+   * Persist calibration log to disk.
+   */
+  private saveFeedback(): void {
+    try {
+      fs.writeFileSync(this.feedbackFilePath, JSON.stringify(this.feedbackLog, null, 2), 'utf-8');
+    } catch (err) {
+      log.debug(`Could not save AI calibration: ${err instanceof Error ? err.message : String(err)}`);
+    }
+  }
+
+  /**
+   * Compute calibration statistics grouped by probability buckets.
+   * Returns formatted prompt text showing the AI's track record.
+   */
+  getCalibrationContext(): string | null {
+    if (!this.feedbackEnabled || this.feedbackLog.length < 5) return null;
+
+    const buckets = this.computeCalibrationBuckets();
+    if (buckets.length === 0) return null;
+
+    const lines = [
+      '## Your Historical Calibration',
+      'Here is how your past predictions performed when markets actually resolved:',
+      '',
+    ];
+
+    for (const bucket of buckets) {
+      const biasLabel = bucket.bias === 'overconfident' ? '⚠️ Overconfident'
+        : bucket.bias === 'underconfident' ? '⚠️ Underconfident'
+        : '✅ Well-calibrated';
+      lines.push(
+        `- ${bucket.label} (n=${bucket.count}): You predicted avg ${(bucket.avgPredicted * 100).toFixed(0)}%, actual resolution ${(bucket.actualRate * 100).toFixed(0)}% — ${biasLabel}`
+      );
+    }
+
+    // Add per-category breakdown if we have enough data
+    const categoryBuckets = this.computeCategoryCalibration();
+    if (categoryBuckets.length > 0) {
+      lines.push('', '### Per-Category Accuracy');
+      for (const cb of categoryBuckets) {
+        lines.push(`- ${cb.category} (n=${cb.count}): predicted avg ${(cb.avgPredicted * 100).toFixed(0)}%, actual ${(cb.actualRate * 100).toFixed(0)}%`);
+      }
+    }
+
+    lines.push('', 'Adjust your estimate up or down based on your historical biases.');
+    return lines.join('\n');
+  }
+
+  /**
+   * Compute calibration buckets: group predictions by probability range,
+   * calculate actual win rate for each bucket.
+   */
+  private computeCalibrationBuckets(): CalibrationBucket[] {
+    const bucketSize = 0.10; // 10% buckets
+    const bucketMap = new Map<number, { predicted: number[]; actual: number[] }>();
+
+    for (const record of this.feedbackLog) {
+      const bucketIdx = Math.min(Math.floor(record.probability / bucketSize), 9);
+      const existing = bucketMap.get(bucketIdx) || { predicted: [], actual: [] };
+      existing.predicted.push(record.probability);
+      existing.actual.push(record.actualOutcome);
+      bucketMap.set(bucketIdx, existing);
+    }
+
+    const buckets: CalibrationBucket[] = [];
+    for (const [idx, data] of bucketMap) {
+      if (data.predicted.length < 2) continue; // Need at least 2 predictions
+
+      const avgPredicted = data.predicted.reduce((s, v) => s + v, 0) / data.predicted.length;
+      const actualRate = data.actual.reduce((s, v) => s + v, 0) / data.actual.length;
+      const diff = avgPredicted - actualRate;
+
+      buckets.push({
+        label: `${(idx * bucketSize * 100).toFixed(0)}-${((idx + 1) * bucketSize * 100).toFixed(0)}%`,
+        avgPredicted,
+        actualRate,
+        count: data.predicted.length,
+        bias: Math.abs(diff) < 0.05 ? 'calibrated' : diff > 0 ? 'overconfident' : 'underconfident',
+      });
+    }
+
+    return buckets.sort((a, b) => b.count - a.count);
+  }
+
+  /**
+   * Compute per-category calibration for markets with category metadata.
+   */
+  private computeCategoryCalibration(): Array<{ category: string; avgPredicted: number; actualRate: number; count: number }> {
+    const catMap = new Map<string, { predicted: number[]; actual: number[] }>();
+
+    for (const record of this.feedbackLog) {
+      if (!record.category) continue;
+      const existing = catMap.get(record.category) || { predicted: [], actual: [] };
+      existing.predicted.push(record.probability);
+      existing.actual.push(record.actualOutcome);
+      catMap.set(record.category, existing);
+    }
+
+    const results: Array<{ category: string; avgPredicted: number; actualRate: number; count: number }> = [];
+    for (const [category, data] of catMap) {
+      if (data.predicted.length < 3) continue;
+      results.push({
+        category,
+        avgPredicted: data.predicted.reduce((s, v) => s + v, 0) / data.predicted.length,
+        actualRate: data.actual.reduce((s, v) => s + v, 0) / data.actual.length,
+        count: data.predicted.length,
+      });
+    }
+
+    return results.sort((a, b) => b.count - a.count);
+  }
+
+  /**
+   * Get calibration stats summary for the dashboard.
+   */
+  getCalibrationStats(): { totalPredictions: number; buckets: CalibrationBucket[]; categories: Array<{ category: string; avgPredicted: number; actualRate: number; count: number }> } | null {
+    if (!this.feedbackEnabled || this.feedbackLog.length < 2) return null;
+    return {
+      totalPredictions: this.feedbackLog.length,
+      buckets: this.computeCalibrationBuckets(),
+      categories: this.computeCategoryCalibration(),
+    };
   }
 
   /**
@@ -514,9 +701,10 @@ export class AITradeFilter {
         ? await fetchConsensus(context.question)
         : consensusFromTitle;
 
-      // Build the analysis prompt (now includes cross-platform data)
+      // Build the analysis prompt (now includes cross-platform data + calibration)
       const recentEvents = this.intelligence?.getEvents().slice(-20) || [];
-      const prompt = buildAnalysisPrompt(trade, context, consensus, bullpenData, recentEvents);
+      const calibrationContext = this.feedbackEnabled ? this.getCalibrationContext() : null;
+      const prompt = buildAnalysisPrompt(trade, context, consensus, bullpenData, recentEvents, calibrationContext);
 
       // Call LLM(s) for probability estimates
       const estimates: AIProbabilityEstimate[] = [];

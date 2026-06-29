@@ -435,10 +435,14 @@
       <div class="panel-head"><span class="icon">📂</span> Open Exposure <span id="posCount" style="color:var(--muted);font-weight:400;font-size:11px"></span></div>
       <div class="panel-body" id="posPanel"><div style="color:var(--muted);font-size:12px;text-align:center;padding:12px 0">No positions</div></div>
     </div>
-    <div class="panel">
-      <div class="panel-head"><span class="icon">🔄</span> Reconciliation</div>
-      <div class="panel-body" id="reconPanel"><div style="color:var(--muted);font-size:12px;text-align:center;padding:12px 0">Loading…</div></div>
-    </div>
+  <div class="panel">
+    <div class="panel-head"><span class="icon">🔄</span> Reconciliation</div>
+    <div class="panel-body" id="reconPanel"><div style="color:var(--muted);font-size:12px;text-align:center;padding:12px 0">Loading…</div></div>
+  </div>
+  <div class="panel" id="calibrationPanelWrap" style="display:none">
+    <div class="panel-head"><span class="icon">🎯</span> AI Calibration</div>
+    <div class="panel-body" id="calibrationPanel"></div>
+  </div>
   </div>
 </div>
 
@@ -610,6 +614,9 @@ async function fetchData() {
 
     // Reconciliation
     renderRecon(d.reconciliation, d.config);
+
+    // AI Calibration
+    renderCalibration(d.calibration);
 
     // Position count history for chart
     const openCount = (d.openPositions || []).length;
@@ -1095,6 +1102,42 @@ async function updateCloseOrderType(type) {
     });
     if (!r.ok) console.error('Failed to update close order type');
   } catch (e) { console.error('Failed to update close order type', e); }
+}
+
+function renderCalibration(cal) {
+  const wrap = document.getElementById('calibrationPanelWrap');
+  const panel = document.getElementById('calibrationPanel');
+  if (!cal || !cal.totalPredictions || cal.totalPredictions < 2) {
+    if (wrap) wrap.style.display = 'none';
+    return;
+  }
+  if (wrap) wrap.style.display = '';
+  let h = '<div style="display:flex;flex-direction:column;gap:6px">';
+  h += `<div class="recon-item"><span class="rl">Total Predictions</span><span class="rv c-cyan">${cal.totalPredictions}</span></div>`;
+
+  // Show calibration buckets
+  if (cal.buckets && cal.buckets.length > 0) {
+    for (const b of cal.buckets) {
+      const biasColor = b.bias === 'calibrated' ? 'c-green' : b.bias === 'overconfident' ? 'c-yellow' : 'c-blue';
+      const biasIcon = b.bias === 'calibrated' ? '✅' : b.bias === 'overconfident' ? '⚠️↓' : '⚠️↑';
+      h += `<div class="recon-item"><span class="rl">${b.label} (n=${b.count})</span><span class="rv"><span class="c-cyan">${(b.avgPredicted*100).toFixed(0)}%</span> → <span class="${biasColor}">${(b.actualRate*100).toFixed(0)}% ${biasIcon}</span></span></div>`;
+    }
+  }
+
+  // Show category breakdown
+  if (cal.categories && cal.categories.length > 0) {
+    h += '<div style="margin-top:8px;padding-top:8px;border-top:1px solid var(--border)">';
+    h += '<div style="font-size:10px;color:var(--muted);text-transform:uppercase;letter-spacing:1px;font-weight:600;margin-bottom:6px">Per-Category</div>';
+    for (const c of cal.categories) {
+      const diff = c.avgPredicted - c.actualRate;
+      const diffColor = Math.abs(diff) < 0.05 ? 'c-green' : diff > 0 ? 'c-yellow' : 'c-blue';
+      h += `<div class="recon-item"><span class="rl">${esc(c.category)} (n=${c.count})</span><span class="rv"><span class="c-cyan">${(c.avgPredicted*100).toFixed(0)}%</span> → <span class="${diffColor}">${(c.actualRate*100).toFixed(0)}%</span></span></div>`;
+    }
+    h += '</div>';
+  }
+
+  h += '</div>';
+  panel.innerHTML = h;
 }
 
 async function redeemToken(tokenId, btn) {

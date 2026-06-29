@@ -147,6 +147,10 @@ export interface ParsedTrade {
   slug?: string;
   volume24hr?: number;
   category?: string;
+  /** AI filter's ensemble probability estimate (0-1) */
+  aiProbability?: number;
+  /** AI filter's confidence (0-1) */
+  aiConfidence?: number;
 }
 
 // ──────────────────────────────────────────────
@@ -200,6 +204,10 @@ export interface Position {
   currentPrice?: number;
   /** Timestamp of last live price update */
   lastPriceUpdate?: number;
+  /** AI filter's probability estimate at time of entry */
+  aiProbability?: number;
+  /** AI filter's confidence at time of entry */
+  aiConfidence?: number;
 }
 
 // ──────────────────────────────────────────────
@@ -371,6 +379,10 @@ export interface TradeJournalEntry {
   slug?: string; // Market slug for Polymarket links
   volume24hr?: number; // 24h market volume from Gamma API
   category?: string; // Market category/group from Gamma API
+  /** AI filter's ensemble probability estimate at time of trade (0-1) */
+  aiProbability?: number;
+  /** AI filter's confidence at time of trade (0-1) */
+  aiConfidence?: number;
 }
 
 /** Snapshot of the virtual portfolio at a point in time */
@@ -543,6 +555,38 @@ export interface CorrelationRecord {
   avgPriceChangePct: number;
   sampleSize: number;
   lastUpdated: number;
+}
+
+// ──────────────────────────────────────────────
+// AI Calibration Feedback
+// ──────────────────────────────────────────────
+
+/** Record of AI prediction vs actual outcome for calibration */
+export interface AICalibrationRecord {
+  /** AI's ensemble probability estimate (0-1) */
+  probability: number;
+  /** AI's confidence (0-1) */
+  confidence: number;
+  /** Actual outcome: 1 for win, 0 for loss */
+  actualOutcome: number;
+  /** Market category for per-category calibration */
+  category?: string;
+  /** When the resolution was recorded */
+  timestamp: number;
+}
+
+/** Aggregated calibration stats for a probability bucket */
+export interface CalibrationBucket {
+  /** Bucket label e.g. '70-80%' */
+  label: string;
+  /** Average AI probability in this bucket */
+  avgPredicted: number;
+  /** Actual resolution rate in this bucket */
+  actualRate: number;
+  /** Number of predictions in this bucket */
+  count: number;
+  /** Bias direction */
+  bias: 'overconfident' | 'underconfident' | 'calibrated';
 }
 
 // ──────────────────────────────────────────────
