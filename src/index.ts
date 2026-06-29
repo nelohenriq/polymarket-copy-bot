@@ -1793,6 +1793,31 @@ async function main(): Promise<void> {
           res.writeHead(404, { 'Content-Type': 'text/plain' });
           res.end('dashboard.html not found in project root');
         }
+      } else if (reqPath === '/api/health') {
+        const strategiesFile = process.env['STRATEGIES_FILE'] || '';
+        const stateFile = config.stateFilePath || getStatePath();
+        const checkFiles = [
+          { name: 'dashboard', path: 'dry-run-trades.json' },
+          { name: 'state', path: stateFile },
+          { name: 'strategies', path: strategiesFile },
+          { name: 'aiCalibration', path: 'ai-calibration.json' },
+        ].filter(f => f.path);
+        const files: Record<string, { exists: boolean; path: string }> = {};
+        for (const f of checkFiles) {
+          files[f.name] = { exists: fs.existsSync(f.path), path: f.path };
+        }
+        const allPresent = Object.values(files).every(f => f.exists);
+        const missing = Object.values(files).filter(f => !f.exists).length;
+        const health = {
+          status: allPresent ? 'ok' : 'degraded',
+          uptime: Math.floor((Date.now() - stats.startTime) / 1000),
+          mode: paperMode ? 'paper' : config.dryRun ? 'dry-run' : 'live',
+          dataFiles: files,
+          summary: { total: checkFiles.length, present: checkFiles.length - missing, missing },
+          timestamp: new Date().toISOString(),
+        };
+        res.writeHead(allPresent ? 200 : 207, { 'Content-Type': 'application/json', 'Access-Control-Allow-Origin': '*', 'Cache-Control': 'no-cache' });
+        res.end(JSON.stringify(health, null, 2));
       } else if (reqPath === '/favicon.ico') {
         res.writeHead(204);
         res.end();
