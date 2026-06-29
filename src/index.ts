@@ -262,6 +262,19 @@ async function main(): Promise<void> {
   const startingCapital = paperMode ? paperConfig!.startingCapital : 0;
   const dashboardPath = 'dry-run-trades.json';
 
+  // ── Ensure data files exist on startup ──
+  // Creates the dashboard JSON with empty data if missing so the dashboard HTTP
+  // server can serve it immediately on a fresh install.
+  if (!fs.existsSync(dashboardPath)) {
+    fs.writeFileSync(dashboardPath, JSON.stringify({
+      lastUpdated: new Date().toISOString(),
+      stats: { ...stats },
+      entries: [],
+      openPositions: [],
+    }, null, 2), 'utf-8');
+    log.info(`Created ${dashboardPath} with empty data`);
+  }
+
   // ── Load persisted state (position reconciliation across restarts) ──
   const lastProcessedTimestamps = new Map<string, number>();
   const statePath = config.stateFilePath || getStatePath();

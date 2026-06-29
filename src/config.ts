@@ -442,6 +442,10 @@ export function loadStrategies(): StrategyConfig[] | undefined {
   if (!filePath) return undefined;
 
   try {
+    if (!fs.existsSync(filePath)) {
+      console.warn(`⚠️  STRATEGIES_FILE '${filePath}' not found — running in single-strategy mode`);
+      return undefined;
+    }
     const raw = fs.readFileSync(filePath, 'utf-8');
     const parsed = JSON.parse(raw) as StrategyConfig[];
 
