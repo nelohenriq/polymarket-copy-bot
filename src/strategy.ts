@@ -213,12 +213,15 @@ export class StrategyRunner {
   /**
    * Restore strategy state from persisted data.
    */
-  restoreState(positions: import('./types').Position[], riskState: Partial<import('./types').RiskState>): void {
+  restoreState(positions: import('./types').Position[], riskState: Partial<import('./types').RiskState>, stats?: import('./types').StrategyState): void {
     if (positions.length > 0) {
       this.positions.loadPositions(positions);
     }
     if (riskState) {
       this.riskManager.restoreState(riskState);
+    }
+    if (stats) {
+      this._stats = { ...this._stats, ...stats };
     }
   }
 }

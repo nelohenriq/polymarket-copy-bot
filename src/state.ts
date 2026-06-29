@@ -11,7 +11,7 @@
  */
 
 import * as fs from 'fs';
-import { TradeJournalEntry, Position, RiskState, SessionStats } from './types';
+import { TradeJournalEntry, Position, RiskState, SessionStats, PersistedStrategyState } from './types';
 import { log } from './logger';
 
 /** The complete persisted bot state */
@@ -24,6 +24,8 @@ export interface BotState {
   riskState: RiskState;
   sessionStats: SessionStats;
   counter: number; // journal entry counter for ID continuity
+  /** Per-strategy positions + risk state (multi-strategy mode only) */
+  strategies?: PersistedStrategyState[];
 }
 
 const STATE_VERSION = 1;
@@ -41,6 +43,7 @@ export function saveState(
   riskState: RiskState,
   sessionStats: SessionStats,
   counter: number,
+  strategies?: PersistedStrategyState[],
 ): void {
   try {
     const state: BotState = {
@@ -52,6 +55,7 @@ export function saveState(
       riskState,
       sessionStats,
       counter,
+      ...(strategies && strategies.length > 0 ? { strategies } : {}),
     };
     fs.writeFileSync(statePath, JSON.stringify(state, null, 2), 'utf-8');
   } catch (err) {

@@ -300,6 +300,27 @@ async function main(): Promise<void> {
       log.info(`Open exposure recalculated: $${openExposure.toFixed(2)} / $${config.maxSessionNotional || '∞'}`);
     }
 
+    // Restore per-strategy state (positions + risk) for multi-strategy mode
+    if (strategyRouter && savedState.strategies && savedState.strategies.length > 0) {
+      let restoredCount = 0;
+      for (const persisted of savedState.strategies) {
+        const runner = strategyRunners.find(r => r.name === persisted.name);
+        if (runner) {
+          runner.restoreState(persisted.positions, persisted.riskState, persisted.stats);
+          restoredCount++;
+        } else {
+          log.warn(`Strategy '${persisted.name}' in saved state not found in config — skipping restore`);
+        }
+      }
+      if (restoredCount > 0) {
+        log.success(`Restored per-strategy state: ${restoredCount} strategy runner(s)`);
+        for (const runner of strategyRunners) {
+          const count = runner.getPositions().count();
+          if (count > 0) log.info(`  [${runner.name}] ${count} open position(s) restored`);
+        }
+      }
+    }
+
     // Restore session stats
     if (savedState.sessionStats) {
       Object.assign(stats, savedState.sessionStats);
@@ -342,6 +363,14 @@ async function main(): Promise<void> {
       // Full state file — only save when journal exists to avoid overwriting
       // loaded state with empty entries in LIVE mode (where journal is null)
       if (journal) {
+        // Collect per-strategy state for persistence
+        const strategyStates = strategyRouter ? strategyRunners.map(r => ({
+          name: r.name,
+          positions: r.getPositions().getAllPositions().filter(p => p.shares > 0),
+          riskState: r.getRiskManager().getState(),
+          stats: r.getState(),
+        })) : undefined;
+
         saveState(
           statePath,
           journal.getEntries(),
@@ -350,6 +379,7 @@ async function main(): Promise<void> {
           riskManager.getState(),
           stats,
           journal.getCounter(),
+          strategyStates,
         );
         reconciliation.lastStateSave = new Date().toISOString();
       }

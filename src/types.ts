@@ -625,6 +625,14 @@ export interface StrategyState {
   halted: boolean;
 }
 
+/** Persisted per-strategy state for surviving restarts */
+export interface PersistedStrategyState {
+  name: string;
+  positions: Position[];
+  riskState: RiskState;
+  stats: StrategyState;
+}
+
 export interface AICalibrationRecord {
   /** AI's ensemble probability estimate (0-1) */
   probability: number;
