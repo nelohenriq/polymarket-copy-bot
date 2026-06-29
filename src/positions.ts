@@ -39,6 +39,10 @@ export class PositionTracker {
       notional: Math.max(0, nextNotional),
       avgPrice: nextShares !== 0 ? avgPrice : 0,
       lastUpdated: Date.now(),
+      category: trade.category ?? existing?.category,
+      peakPrice: existing?.peakPrice,
+      currentPrice: existing?.currentPrice,
+      lastPriceUpdate: existing?.lastPriceUpdate,
     };
 
     this.positions.set(key, updated);
@@ -165,7 +169,7 @@ export class PositionTracker {
         total += (pos.currentPrice - pos.avgPrice) * pos.shares;
       }
     }
-    return total;
+    return Math.round(total * 100) / 100;
   }
 
   /**
