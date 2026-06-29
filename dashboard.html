@@ -17,6 +17,33 @@
     --cyan: #06b6d4; --cyan-bg: rgba(6,182,212,0.08);
     --pink: #ec4899; --orange: #f97316;
   }
+
+  /* ── Light Theme ── */
+  [data-theme="light"] {
+    --bg: #f8f9fb; --bg2: #ffffff; --bg3: #f0f2f5; --bg4: #e8ebef;
+    --border: #dde1e8; --border-light: #c4cad4;
+    --text: #1a1f2e; --muted: #6b7a8d; --muted2: #9aa5b4;
+    --accent: #6366f1; --accent-dim: #4f46e5;
+    --green: #059669; --green-dim: #047857; --green-bg: rgba(5,150,105,0.08);
+    --red: #dc2626; --red-dim: #b91c1c; --red-bg: rgba(220,38,38,0.08);
+    --yellow: #d97706; --yellow-bg: rgba(217,119,6,0.08);
+    --blue: #2563eb; --blue-bg: rgba(37,99,235,0.08);
+    --cyan: #0891b2; --cyan-bg: rgba(8,145,178,0.08);
+    --pink: #db2777; --orange: #ea580c;
+  }
+  [data-theme="light"] .modal { box-shadow: 0 24px 80px rgba(0,0,0,0.12); }
+  [data-theme="light"] .modal-overlay { background: rgba(0,0,0,0.3); }
+  [data-theme="light"] .card:hover { box-shadow: 0 4px 20px rgba(0,0,0,0.08); }
+  [data-theme="light"] .card.expanded { box-shadow: 0 4px 24px rgba(99,102,241,0.08); }
+  [data-theme="light"] .tod-cell:hover { box-shadow: 0 2px 8px rgba(0,0,0,0.12); }
+  [data-theme="light"] .spark-tooltip { box-shadow: 0 8px 24px rgba(0,0,0,0.12); }
+  [data-theme="light"] .pill { background: #fff; }
+  [data-theme="light"] .panel { background: #fff; }
+  [data-theme="light"] .card { background: #fff; }
+  [data-theme="light"] .card-details { background: var(--bg3); }
+  [data-theme="light"] .modal { background: #fff; }
+  [data-theme="light"] .modal-header { background: #fff; }
+
   * { margin: 0; padding: 0; box-sizing: border-box; }
   body {
     background: var(--bg); color: var(--text);
@@ -585,12 +612,12 @@
   .sparkline-pill svg .crosshair { stroke: var(--border-light); stroke-width: 0.5; stroke-dasharray: 2,2; }
   .sparkline-pill svg .hover-dot { transition: r 0.1s ease; }
 </style>
+<script>(function(){try{var t=localStorage.getItem('theme');if(t==='light')document.documentElement.setAttribute('data-theme','light');}catch(e){}})();</script>
 </head>
 <body>
 <div class="app">
 
-<!-- ═══ Header ═══ -->
-<div class="header">
+<!-- ═══ Header ═══ -->  <div class="header">
   <div class="header-left">
     <h1>⚡ Polymarket Copy-Bot</h1>
     <div class="sub">
@@ -598,6 +625,7 @@
       <span class="uptime-pill" id="uptimeBadge">—</span>
     </div>
   </div>
+  <button id="themeToggle" onclick="toggleTheme()" title="Toggle light/dark theme" style="background:var(--bg3);border:1px solid var(--border);border-radius:8px;padding:8px 12px;cursor:pointer;font-size:14px;font-family:inherit;transition:all 0.2s;color:var(--text);display:flex;align-items:center;gap:6px"><span id="themeIcon">☀️</span><span id="themeLabel" style="font-size:11px;font-weight:600;color:var(--muted)">Light</span></button>
 </div>
 
 <!-- ═══ Stats ═══ -->
@@ -803,6 +831,27 @@ const pnlHistory = []; // {t: timestamp, v: pnlValue} — tracked client-side ac
 const posHistory = []; // {t: timestamp, open: N, closed: N} — position counts over time
 const stratPnlHistory = {}; // strategyName -> [{t, v}] — per-strategy P&L tracked client-side
 const PNL_HISTORY_MAX = 360; // ~30 min at 5s intervals
+
+function toggleTheme() {
+  const isLight = document.documentElement.getAttribute('data-theme') === 'light';
+  if (isLight) {
+    document.documentElement.removeAttribute('data-theme');
+    localStorage.setItem('theme', 'dark');
+  } else {
+    document.documentElement.setAttribute('data-theme', 'light');
+    localStorage.setItem('theme', 'light');
+  }
+  updateThemeIcon();
+}
+function updateThemeIcon() {
+  const isLight = document.documentElement.getAttribute('data-theme') === 'light';
+  const icon = document.getElementById('themeIcon');
+  const label = document.getElementById('themeLabel');
+  if (icon) icon.textContent = isLight ? '🌙' : '☀️';
+  if (label) label.textContent = isLight ? 'Dark' : 'Light';
+}
+// Init theme icon on load
+try { updateThemeIcon(); } catch(e) {}
 
 function setTab(el) {
   document.querySelectorAll('.tab').forEach(t => t.classList.remove('active'));
