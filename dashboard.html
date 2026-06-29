@@ -937,7 +937,7 @@ async function fetchData() {
     renderCalibration(d.calibration);
 
     // Strategy Leaderboard
-    renderLeaderboard(d.strategies, d.risk);
+    renderLeaderboard(d.strategies);
 
     // Multi-Strategy Breakdown
     _lastStrategies = d.strategies;
@@ -2560,7 +2560,7 @@ function renderStrategies(strategies, risk) {
 }
 
 function renderCalibration(cal) {
-function renderLeaderboard(strategies, risk) {
+function renderLeaderboard(strategies) {
   const wrap = document.getElementById('leaderboardPanelWrap');
   const panel = document.getElementById('leaderboardPanel');
   if (!strategies || !Array.isArray(strategies) || strategies.length < 2) {
