@@ -31,3 +31,7 @@ Thumbs.db
 
 # Temporary
 tmp/
+
+# Runtime data files (auto-created by the bot)
+dry-run-trades.json
+bot-state.json
