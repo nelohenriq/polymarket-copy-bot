@@ -1062,6 +1062,31 @@ function renderStratHistogram(closedEntries) {
       `data-price="$${(sorted[i].entryPrice||0).toFixed(4)}" data-idx="${i}"/>`;
   }
 
+  // Cumulative P&L line overlay
+  const cumulative = [];
+  let cumRunning = 0;
+  for (let i = 0; i < barCount; i++) {
+    cumRunning += sorted[i].pnl;
+    cumulative.push(cumRunning);
+  }
+  const cumMin = Math.min(0, ...cumulative);
+  const cumMax = Math.max(0, ...cumulative);
+  const cumRange = cumMax - cumMin || 1;
+  const cumChartH = maxBarH - 8; // slightly shorter than bars
+  const cumBaseline = H - padY - 4; // bottom of chart area
+  const cumPoints = cumulative.map((v, i) => {
+    const cx = padX + i * (barW + gap) + barW / 2;
+    const cy = cumBaseline - ((v - cumMin) / cumRange) * cumChartH;
+    return `${cx.toFixed(1)},${cy.toFixed(1)}`;
+  }).join(' ');
+  const cumColor = cumRunning >= 0 ? '#6366f1' : '#f97316';
+  rects += `<polyline points="${cumPoints}" fill="none" stroke="${cumColor}" stroke-width="1.8" ` +
+    `stroke-linecap="round" stroke-linejoin="round" opacity="0.8" pointer-events="none"/>`;
+  // Endpoint dot
+  const lastCumX = padX + (barCount - 1) * (barW + gap) + barW / 2;
+  const lastCumY = cumBaseline - ((cumulative[barCount - 1] - cumMin) / cumRange) * cumChartH;
+  rects += `<circle cx="${lastCumX.toFixed(1)}" cy="${lastCumY.toFixed(1)}" r="3" fill="${cumColor}" opacity="0.9" pointer-events="none"/>`;
+
   // Zero line
   const zeroLineX = padX + (maxAbs / (maxAbs * 2)) * (W - padX * 2);
   rects += `<line x1="${zeroLineX.toFixed(1)}" y1="${padY}" x2="${zeroLineX.toFixed(1)}" y2="${H - padY}" ` +
@@ -1074,7 +1099,8 @@ function renderStratHistogram(closedEntries) {
   const totalPnl = pnls.reduce((s, v) => s + v, 0);
   const wins = pnls.filter(v => v > 0).length;
   const losses = pnls.filter(v => v < 0).length;
-  label.textContent = `${barCount} trades · ${fmt$(totalPnl)} total`;
+  const cumEndLabel = cumRunning >= 0 ? `+${fmt$(cumRunning)}` : fmt$(cumRunning);
+  label.innerHTML = `${barCount} trades · ${fmt$(totalPnl)} total · <span style="color:${cumColor}">cum ${cumEndLabel}</span> <span style="font-size:8px;color:var(--muted)">●</span>`;
   label.className = totalPnl >= 0 ? 'c-green' : 'c-red';
 
   // Hover tooltip on bars
