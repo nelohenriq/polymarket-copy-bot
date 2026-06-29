@@ -625,7 +625,7 @@
       <span class="uptime-pill" id="uptimeBadge">—</span>
     </div>
   </div>
-  <button id="themeToggle" onclick="toggleTheme()" title="Toggle light/dark theme" style="background:var(--bg3);border:1px solid var(--border);border-radius:8px;padding:8px 12px;cursor:pointer;font-size:14px;font-family:inherit;transition:all 0.2s;color:var(--text);display:flex;align-items:center;gap:6px"><span id="themeIcon">☀️</span><span id="themeLabel" style="font-size:11px;font-weight:600;color:var(--muted)">Light</span></button>
+  <button id="themeToggle" onclick="toggleTheme()" title="Toggle light/dark theme" style="background:var(--bg3);border:1px solid var(--border);border-radius:8px;padding:8px 12px;cursor:pointer;font-size:14px;font-family:inherit;transition:all 0.2s;color:var(--text);display:none;align-items:center;gap:6px"><span id="themeIcon">☀️</span><span id="themeLabel" style="font-size:11px;font-weight:600;color:var(--muted)">Light</span></button>
 </div>
 
 <!-- ═══ Stats ═══ -->
@@ -847,11 +847,20 @@ function updateThemeIcon() {
   const isLight = document.documentElement.getAttribute('data-theme') === 'light';
   const icon = document.getElementById('themeIcon');
   const label = document.getElementById('themeLabel');
+  const btn = document.getElementById('themeToggle');
   if (icon) icon.textContent = isLight ? '🌙' : '☀️';
   if (label) label.textContent = isLight ? 'Dark' : 'Light';
+  if (btn) btn.style.display = 'flex';
 }
 // Init theme icon on load
 try { updateThemeIcon(); } catch(e) {}
+
+function isLightTheme() {
+  return document.documentElement.getAttribute('data-theme') === 'light';
+}
+function themeColor(darkVal, lightVal) {
+  return isLightTheme() ? lightVal : darkVal;
+}
 
 function setTab(el) {
   document.querySelectorAll('.tab').forEach(t => t.classList.remove('active'));
@@ -1554,7 +1563,7 @@ function renderCompare() {
         }).join(' ');
       }
 
-      let svgContent = `<line x1="${pad}" y1="${zeroY.toFixed(1)}" x2="${W-pad}" y2="${zeroY.toFixed(1)}" stroke="#1e2d4a" stroke-width="0.5" stroke-dasharray="2,3"/>`;
+      let svgContent = `<line x1="${pad}" y1="${zeroY.toFixed(1)}" x2="${W-pad}" y2="${zeroY.toFixed(1)}" stroke="var(--border)" stroke-width="0.5" stroke-dasharray="2,3"/>`;
 
       // Left strategy line (cyan)
       const lPts = histToPoints(lHist);
@@ -1656,11 +1665,11 @@ function renderStratTrendline(closedEntries) {
 
   let svgContent = '';
   // Zero line
-  svgContent += `<line x1="${pad}" y1="${zeroY.toFixed(1)}" x2="${W - pad}" y2="${zeroY.toFixed(1)}" stroke="#1e2d4a" stroke-width="0.5" stroke-dasharray="2,3"/>`;
+  svgContent += `<line x1="${pad}" y1="${zeroY.toFixed(1)}" x2="${W - pad}" y2="${zeroY.toFixed(1)}" stroke="var(--border)" stroke-width="0.5" stroke-dasharray="2,3"/>`;
   // Day separator lines
   for (let i = 1; i < points.length; i++) {
     const sepX = (points[i].x + points[i - 1].x) / 2;
-    svgContent += `<line x1="${sepX.toFixed(1)}" y1="${pad}" x2="${sepX.toFixed(1)}" y2="${H - pad}" stroke="#1e2d4a" stroke-width="0.3" opacity="0.5"/>`;
+    svgContent += `<line x1="${sepX.toFixed(1)}" y1="${pad}" x2="${sepX.toFixed(1)}" y2="${H - pad}" stroke="var(--border)" stroke-width="0.3" opacity="0.5"/>`;
   }
   // Fill area
   svgContent += `<polygon points="${fillPts}" fill="${lineColor}" opacity="0.08"/>`;
@@ -1677,7 +1686,7 @@ function renderStratTrendline(closedEntries) {
   // Day labels at bottom
   for (let i = 0; i < days.length; i++) {
     const shortLabel = days[i].label.split(',')[0]; // just "Mon", "Tue", etc.
-    svgContent += `<text x="${points[i + 1].x}" y="${H - 1}" text-anchor="middle" fill="#5a6b8a" font-size="8" font-family="inherit">${shortLabel}</text>`;
+    svgContent += `<text x="${points[i + 1].x}" y="${H - 1}" text-anchor="middle" fill="var(--muted)" font-size="8" font-family="inherit">${shortLabel}</text>`;
   }
   // Crosshair + hover elements
   svgContent += `<line class="crosshair trend-cross" x1="0" y1="0" x2="0" y2="${H}" style="display:none"/>`;
@@ -2063,7 +2072,7 @@ function renderStratHistogram(closedEntries) {
   // Zero line
   const zeroLineX = padX + (maxAbs / (maxAbs * 2)) * (W - padX * 2);
   rects += `<line x1="${zeroLineX.toFixed(1)}" y1="${padY}" x2="${zeroLineX.toFixed(1)}" y2="${H - padY}" ` +
-    `stroke="#2a3a5c" stroke-width="1" stroke-dasharray="3,3"/>`;
+    `stroke="var(--border-light)" stroke-width="1" stroke-dasharray="3,3"/>`;
 
   svg.setAttribute('viewBox', `0 0 ${W} ${H}`);
   svg.innerHTML = rects;
