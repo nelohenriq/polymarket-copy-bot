@@ -343,6 +343,61 @@
   .recon-alert.warn { background: var(--yellow-bg); border: 1px solid rgba(245,158,11,0.15); color: var(--yellow); }
   .recon-alert.ok { background: var(--green-bg); border: 1px solid rgba(16,185,129,0.1); color: var(--green); }
 
+  /* ── Strategy Cards ── */
+  .strat-card {
+    padding: 14px 18px; border-bottom: 1px solid var(--border);
+    transition: background 0.15s;
+  }
+  .strat-card:last-child { border-bottom: none; }
+  .strat-card:hover { background: var(--bg3); }
+  .strat-header {
+    display: flex; justify-content: space-between; align-items: center;
+    margin-bottom: 10px;
+  }
+  .strat-name {
+    font-size: 14px; font-weight: 700; color: var(--text);
+    display: flex; align-items: center; gap: 8px;
+  }
+  .strat-badge {
+    display: inline-block; padding: 2px 8px; border-radius: 5px;
+    font-size: 9px; font-weight: 700; text-transform: uppercase; letter-spacing: 0.5px;
+  }
+  .strat-badge.active { background: var(--green-bg); color: var(--green); border: 1px solid rgba(16,185,129,0.2); }
+  .strat-badge.halted { background: var(--red-bg); color: var(--red); border: 1px solid rgba(239,68,68,0.2); }
+  .strat-pnl {
+    font-size: 16px; font-weight: 700; font-variant-numeric: tabular-nums;
+  }
+  .strat-stats {
+    display: grid; grid-template-columns: repeat(3, 1fr); gap: 8px;
+    margin-bottom: 8px;
+  }
+  .strat-stat {
+    background: var(--bg); border-radius: 8px; padding: 8px 10px; text-align: center;
+  }
+  .strat-stat .ss-label {
+    font-size: 9px; color: var(--muted); text-transform: uppercase;
+    letter-spacing: 0.8px; font-weight: 500;
+  }
+  .strat-stat .ss-val {
+    font-size: 15px; font-weight: 700; margin-top: 2px;
+    font-variant-numeric: tabular-nums;
+  }
+  .strat-bar {
+    height: 4px; background: var(--bg); border-radius: 2px; overflow: hidden;
+    margin-top: 8px;
+  }
+  .strat-bar-fill {
+    height: 100%; border-radius: 2px; transition: width 0.6s ease;
+  }
+  .strat-routing {
+    font-size: 10px; color: var(--muted); margin-top: 6px;
+    display: flex; gap: 6px; flex-wrap: wrap;
+  }
+  .strat-routing .rtag {
+    background: var(--bg); border: 1px solid var(--border); border-radius: 4px;
+    padding: 1px 6px; font-size: 9px; font-weight: 600;
+  }
+
   /* ── Sparkline Tooltip ── */
   .spark-tooltip {
     position: fixed; z-index: 2000; pointer-events: none;
@@ -438,6 +493,10 @@
   <div class="panel">
     <div class="panel-head"><span class="icon">🔄</span> Reconciliation</div>
     <div class="panel-body" id="reconPanel"><div style="color:var(--muted);font-size:12px;text-align:center;padding:12px 0">Loading…</div></div>
+  </div>
+  <div class="panel" id="strategiesPanelWrap" style="display:none">
+    <div class="panel-head"><span class="icon">⚡</span> Strategy Breakdown <span id="stratCount" style="color:var(--muted);font-weight:400;font-size:11px"></span></div>
+    <div class="panel-body no-pad" id="strategiesPanel"></div>
   </div>
   <div class="panel" id="calibrationPanelWrap" style="display:none">
     <div class="panel-head"><span class="icon">🎯</span> AI Calibration</div>
@@ -617,6 +676,9 @@ async function fetchData() {
 
     // AI Calibration
     renderCalibration(d.calibration);
+
+    // Multi-Strategy Breakdown
+    renderStrategies(d.strategies, d.risk);
 
     // Position count history for chart
     const openCount = (d.openPositions || []).length;
@@ -1102,6 +1164,84 @@ async function updateCloseOrderType(type) {
     });
     if (!r.ok) console.error('Failed to update close order type');
   } catch (e) { console.error('Failed to update close order type', e); }
+}
+
+function renderStrategies(strategies, risk) {
+  const wrap = document.getElementById('strategiesPanelWrap');
+  const panel = document.getElementById('strategiesPanel');
+  if (!strategies || !Array.isArray(strategies) || strategies.length === 0) {
+    if (wrap) wrap.style.display = 'none';
+    return;
+  }
+  if (wrap) wrap.style.display = '';
+  document.getElementById('stratCount').textContent = `(${strategies.length})`;
+
+  // Global stats for comparison
+  const globalNotional = risk?.sessionNotional || 0;
+  const globalPnl = risk?.sessionPnl || 0;
+
+  let h = '';
+  for (const s of strategies) {
+    const isHalted = s.halted;
+    const pnl = s.sessionPnl || 0;
+    const pnlColor = isHalted ? 'var(--red)' : pnl >= 0 ? 'var(--green)' : 'var(--red)';
+    const badgeClass = isHalted ? 'halted' : 'active';
+    const badgeLabel = isHalted ? '🛑 Halted' : '✅ Active';
+    const execRate = s.tradesRouted > 0 ? ((s.tradesExecuted / s.tradesRouted) * 100).toFixed(0) : '0';
+    const blockRate = s.tradesRouted > 0 ? ((s.tradesBlocked / s.tradesRouted) * 100).toFixed(0) : '0';
+
+    // Notional bar (relative to global total)
+    const notionalPct = globalNotional > 0 ? Math.min((s.sessionNotional / globalNotional) * 100, 100) : 0;
+    const barColor = s.sessionNotional > 0 ? 'var(--cyan)' : 'var(--muted2)';
+
+    h += `<div class="strat-card">
+      <div class="strat-header">
+        <div class="strat-name">
+          <span>${esc(s.name)}</span>
+          <span class="strat-badge ${badgeClass}">${badgeLabel}</span>
+        </div>
+        <div class="strat-pnl" style="color:${pnlColor}">${fmt$(pnl)}</div>
+      </div>
+      <div class="strat-stats">
+        <div class="strat-stat">
+          <div class="ss-label">Routed</div>
+          <div class="ss-val">${s.tradesRouted || 0}</div>
+        </div>
+        <div class="strat-stat">
+          <div class="ss-label">Executed</div>
+          <div class="ss-val c-green">${s.tradesExecuted || 0}</div>
+        </div>
+        <div class="strat-stat">
+          <div class="ss-label">Blocked</div>
+          <div class="ss-val c-red">${s.tradesBlocked || 0}</div>
+        </div>
+      </div>
+      <div class="strat-stats">
+        <div class="strat-stat">
+          <div class="ss-label">Volume</div>
+          <div class="ss-val c-blue">${fmtShort$(s.totalVolume || 0)}</div>
+        </div>
+        <div class="strat-stat">
+          <div class="ss-label">Open Pos</div>
+          <div class="ss-val c-yellow">${s.openPositions || 0}</div>
+        </div>
+        <div class="strat-stat">
+          <div class="ss-label">Exposure</div>
+          <div class="ss-val c-cyan">${fmt$(s.sessionNotional || 0)}</div>
+        </div>
+      </div>
+      <div class="strat-bar">
+        <div class="strat-bar-fill" style="width:${notionalPct.toFixed(0)}%;background:${barColor}"></div>
+      </div>
+      <div style="display:flex;justify-content:space-between;font-size:10px;color:var(--muted);margin-top:4px">
+        <span>Exec: ${execRate}%</span>
+        <span>Block: ${blockRate}%</span>
+        <span>${notionalPct.toFixed(0)}% of global</span>
+      </div>
+    </div>`;
+  }
+
+  panel.innerHTML = h;
 }
 
 function renderCalibration(cal) {
